@@ -1,0 +1,14 @@
+python-dotenv
+diskcache
+yfinance
+pinecone
+cohere
+beautifulsoup4
+lxml
+pdfplumber
+requests
+pytest
+guardrails-ai
+presidio-analyzer
+presidio-anonymizer
+groq
