@@ -42,6 +42,8 @@ def get_fundamentals(ticker: str) -> dict:
         "roe": info.get("returnOnEquity"),
         "debt_to_equity": info.get("debtToEquity"),
         "revenue": info.get("totalRevenue"),
+        "pb_ratio": info.get("priceToBook"),
+        "dividend_yield": info.get("dividendYield"),
     }
 
 
@@ -79,3 +81,30 @@ def search_sector_peers(sector: str, mktcap_range: Tuple[float, float]) -> List[
         if cap is not None and lo <= cap <= hi:
             peers.append(str(symbol))
     return peers
+
+
+def price_move_around(ticker: str, date: str) -> dict:
+    """% price change around an event date, from daily closes.
+
+    pct_1d: close on the event day (or nearest next trading day) vs the
+    previous trading close. pct_5d: close 5 trading days after the event day
+    vs that same previous close. None when history doesn't cover the date.
+    """
+    out = {"pct_1d": None, "pct_5d": None}
+    df = get_price_history(ticker, period="1y")
+    if df.empty or "Close" not in df.columns:
+        return out
+    closes = df["Close"]
+    days = closes.index.tz_localize(None).normalize()
+    target = pd.Timestamp(date)
+    positions = [i for i, d in enumerate(days) if d >= target]
+    if not positions or positions[0] == 0:  # date after history end, or no prior close
+        return out
+    pos = positions[0]
+    prev_close = float(closes.iloc[pos - 1])
+    if prev_close == 0:
+        return out
+    out["pct_1d"] = round((float(closes.iloc[pos]) / prev_close - 1) * 100, 2)
+    if pos + 5 < len(closes):
+        out["pct_5d"] = round((float(closes.iloc[pos + 5]) / prev_close - 1) * 100, 2)
+    return out

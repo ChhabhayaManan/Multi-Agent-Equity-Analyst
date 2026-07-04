@@ -114,9 +114,12 @@ def store_to_pinecone(
     logger.info("Upserted %d vectors to %s/%s (%s)", len(vectors), INDEX_NAME, ticker, source_type)
 
 
-def query_pinecone(ticker: str, query: str, source_type: str, k: int = 5) -> List[dict]:
-    """Semantic search within namespace=ticker filtered by source_type.
+def query_pinecone(
+    ticker: str, query: str, source_type: Optional[str] = None, k: int = 5
+) -> List[dict]:
+    """Semantic search within namespace=ticker, optionally filtered by source_type.
 
+    source_type=None searches across all source types.
     Returns [{text, score, metadata}] sorted by score desc.
     """
     index = get_index()
@@ -124,7 +127,7 @@ def query_pinecone(ticker: str, query: str, source_type: str, k: int = 5) -> Lis
     res = index.query(
         namespace=ticker,
         vector=query_vec,
-        filter={"source_type": {"$eq": source_type}},
+        filter={"source_type": {"$eq": source_type}} if source_type else None,
         top_k=k,
         include_metadata=True,
     )
@@ -136,3 +139,69 @@ def query_pinecone(ticker: str, query: str, source_type: str, k: int = 5) -> Lis
         }
         for m in res.matches
     ]
+
+
+def namespace_exists(ticker: str) -> bool:
+    """True if namespace=ticker holds at least one vector."""
+    stats = get_index().describe_index_stats()
+    ns = stats.namespaces or {}
+    return ticker in ns and getattr(ns[ticker], "vector_count", 0) > 0
+
+
+def _doc_id_from_vid(vid: str, ticker: str) -> str:
+    """Fallback: parse '{ticker}-{doc_key}-{i}' -> doc_key when metadata lacks document_id."""
+    core = vid[len(ticker) + 1:] if vid.startswith(ticker + "-") else vid
+    return core.rsplit("-", 1)[0] if "-" in core else core
+
+
+def list_documents(ticker: str) -> dict:
+    """Distinct indexed documents in namespace=ticker, grouped by source_type.
+
+    Returns {source_type: [{document_id, date, source_type, chunk_count}]}, one
+    entry per distinct document_id (chunks collapsed). {} if namespace absent.
+    """
+    if not namespace_exists(ticker):
+        return {}
+    index = get_index()
+    ids: List[str] = []
+    for page in index.list(namespace=ticker):
+        ids.extend(page)
+    docs: dict = {}
+    for start in range(0, len(ids), 100):
+        resp = index.fetch(ids=ids[start:start + 100], namespace=ticker)
+        vectors = getattr(resp, "vectors", {}) or {}
+        for vec in vectors.values():
+            md = getattr(vec, "metadata", None) or {}
+            st = md.get("source_type", "unknown")
+            doc_id = md.get("document_id") or _doc_id_from_vid(getattr(vec, "id", ""), ticker)
+            bucket = docs.setdefault(st, {})
+            entry = bucket.setdefault(
+                doc_id,
+                {"document_id": doc_id, "date": md.get("date"),
+                 "source_type": st, "chunk_count": 0})
+            entry["chunk_count"] += 1
+            if entry["date"] is None and md.get("date"):
+                entry["date"] = md["date"]
+    return {st: list(by_id.values()) for st, by_id in docs.items()}
+
+
+def delete_namespace(ticker: str) -> None:
+    """Drop every vector in namespace=ticker. No-op if the namespace is absent."""
+    try:
+        get_index().delete(delete_all=True, namespace=ticker)
+        logger.info("Deleted namespace %s from %s", ticker, INDEX_NAME)
+    except Exception as e:  # pinecone raises NotFoundException for missing namespaces
+        if "not found" in str(e).lower() or "404" in str(e):
+            return
+        raise
+
+
+def wait_for_vectors(ticker: str, timeout_s: int = 20) -> bool:
+    """Poll until namespace=ticker is visible (serverless is eventually
+    consistent between upsert and query). True once visible, False on timeout."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if namespace_exists(ticker):
+            return True
+        time.sleep(2)
+    return False

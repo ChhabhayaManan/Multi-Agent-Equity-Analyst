@@ -1,6 +1,7 @@
 """Real-network tests against WAAREEENER.NS — assert shapes/types, not values."""
 
 import pandas as pd
+from datetime import date, timedelta
 
 from tools import market_tools
 
@@ -30,7 +31,7 @@ def test_get_price_history():
 
 def test_get_fundamentals():
     fundamentals = market_tools.get_fundamentals(TICKER)
-    assert set(fundamentals) == {"pe_ratio", "roe", "debt_to_equity", "revenue"}
+    assert {"pe_ratio", "roe", "debt_to_equity", "revenue"} <= set(fundamentals)
     assert isinstance(fundamentals["revenue"], (int, float))
 
 
@@ -45,3 +46,23 @@ def test_search_sector_peers():
     peers = market_tools.search_sector_peers("Technology", (1e10, 1e15))
     assert isinstance(peers, list)
     assert all(isinstance(p, str) and p.endswith(".NS") for p in peers)
+
+
+def test_price_move_around_recent_date():
+    event_date = (date.today() - timedelta(days=30)).isoformat()
+    moves = market_tools.price_move_around(TICKER, event_date)
+    assert set(moves) == {"pct_1d", "pct_5d"}
+    assert isinstance(moves["pct_1d"], float)
+    assert isinstance(moves["pct_5d"], float)
+    assert -50 < moves["pct_1d"] < 50  # sanity: single-day move
+
+
+def test_price_move_around_future_date_returns_none():
+    moves = market_tools.price_move_around(TICKER, (date.today() + timedelta(days=30)).isoformat())
+    assert moves == {"pct_1d": None, "pct_5d": None}
+
+
+def test_get_fundamentals_extended_keys():
+    fund = market_tools.get_fundamentals(TICKER)
+    assert {"pe_ratio", "roe", "debt_to_equity", "revenue",
+            "pb_ratio", "dividend_yield"} <= set(fund)

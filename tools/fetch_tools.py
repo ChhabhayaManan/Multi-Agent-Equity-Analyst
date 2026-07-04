@@ -87,6 +87,7 @@ def resolve_screener_slug(ticker: str) -> str:
 def fetch_screener_page(ticker: str) -> str:
     """Raw HTML of the screener.in company page (consolidated view, standalone fallback)."""
     slug = resolve_screener_slug(ticker)
+    print(slug)
     resp = requests.get(f"{SCREENER_BASE}/{slug}/consolidated/", headers=_HEADERS, timeout=30)
     if resp.status_code == 404:
         resp = requests.get(f"{SCREENER_BASE}/{slug}/", headers=_HEADERS, timeout=30)
@@ -216,3 +217,40 @@ def index_pdf_document(url: str, ticker: str, source_type: str, meta: Optional[d
         logger.warning("No text extracted from %s; skipping indexing", url)
         return
     store_to_pinecone(ticker, [text], source_type, meta)
+
+
+def fetch_shareholding(ticker: str) -> dict:
+    """Latest-quarter shareholding pattern from screener.in's Shareholding section.
+
+    Screener renders a quarterly table (section id='shareholding'): rows are
+    'Promoters +', 'FIIs +', 'DIIs +', 'Public +'; the last column is the most
+    recent quarter. Returns percentages as floats, None for anything missing.
+    """
+    empty = {"promoter": None, "fii": None, "dii": None, "public": None, "quarter": None}
+    soup = BeautifulSoup(fetch_screener_page(ticker), "lxml")
+    section = soup.find(id="shareholding")
+    if section is None:
+        return empty
+    table = section.find("table")
+    if table is None:
+        return empty
+    out = dict(empty)
+    headers = [th.get_text(strip=True) for th in table.select("thead th")]
+    if len(headers) > 1:
+        out["quarter"] = headers[-1]
+    row_map = (("promoter", "promoter"), ("fii", "fii"), ("dii", "dii"), ("public", "public"))
+    for row in table.select("tbody tr"):
+        cells = row.find_all("td")
+        if len(cells) < 2:
+            continue
+        label = cells[0].get_text(strip=True).lower()
+        raw = cells[-1].get_text(strip=True).replace("%", "").replace(",", "")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        for prefix, key in row_map:
+            if label.startswith(prefix) and out[key] is None:
+                out[key] = value
+                break
+    return out
