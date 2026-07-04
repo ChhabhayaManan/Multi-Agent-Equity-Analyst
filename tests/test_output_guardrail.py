@@ -105,11 +105,88 @@ def test_no_chunks_means_nothing_grounded(guardrail):
     assert result.cleaned_text == NO_GROUNDED_INFO_MESSAGE
 
 
+# --- Numeric-overlap grounding + refusal exemption (no API calls: embeddings
+# --- mocked orthogonal so only the new non-embedding paths can ground) ---
+
+
+def _orthogonal_embeds(texts, input_type="passage"):
+    vec = [1.0, 0.0] if input_type == "query" else [0.0, 1.0]
+    return [vec for _ in texts]
+
+
+def test_numeric_overlap_grounds_tool_data(guardrail):
+    with patch("guard.output_guardrail.embed_texts", side_effect=_orthogonal_embeds):
+        result = guardrail.validate(
+            "The current price of Waaree Energies is 3595.0 INR [live: yfinance].",
+            ['{"ticker": "WAAREEENER.NS", "price": 3595.0}'],
+        )
+    assert result.passed
+    assert "3595.0" in result.cleaned_text
+
+
+def test_numeric_overlap_normalizes_commas(guardrail):
+    with patch("guard.output_guardrail.embed_texts", side_effect=_orthogonal_embeds):
+        result = guardrail.validate(
+            "Revenue was Rs 16,736 crore last quarter [live: yfinance].",
+            ['{"revenue": 16736}'],
+        )
+    assert result.passed
+
+
+def test_numeric_overlap_requires_full_number(guardrail):
+    # 35 must NOT match inside 3595.0
+    with patch("guard.output_guardrail.embed_texts", side_effect=_orthogonal_embeds):
+        result = guardrail.validate(
+            "The price rose 35 percent.",
+            ['{"price": 3595.0}'],
+        )
+    assert not result.passed
+    assert result.cleaned_text == NO_GROUNDED_INFO_MESSAGE
+
+
+def test_numeric_overlap_matches_rounded_float(guardrail):
+    # LLM rounds "2859.199951171875" to "2859.20" - must still ground.
+    with patch("guard.output_guardrail.embed_texts", side_effect=_orthogonal_embeds):
+        result = guardrail.validate(
+            "The current price of Waaree Energies is 2859.20 INR [live: yfinance].",
+            ['{"ticker": "WAAREEENER.NS", "price": 2859.199951171875}'],
+        )
+    assert result.passed
+    assert "2859.20" in result.cleaned_text
+
+
+def test_no_number_hallucination_still_stripped(guardrail):
+    with patch("guard.output_guardrail.embed_texts", side_effect=_orthogonal_embeds):
+        result = guardrail.validate(
+            "The company announced a merger with a European automaker.",
+            ['{"price": 3595.0}'],
+        )
+    assert not result.passed
+    assert result.cleaned_text == NO_GROUNDED_INFO_MESSAGE
+
+
+def test_refusal_phrase_passes(guardrail):
+    with patch("guard.output_guardrail.embed_texts", side_effect=_orthogonal_embeds):
+        result = guardrail.validate(
+            "I don't have that information.",
+            ['{"results": [], "note": "no indexed chunks matched"}'],
+        )
+    assert result.passed
+    assert result.cleaned_text == "I don't have that information."
+
+
+def test_refusal_phrase_passes_even_without_chunks(guardrail):
+    result = guardrail.validate("I don't have that information.", [])
+    assert result.passed
+
+
 def test_embed_error_fails_closed(guardrail):
+    # UNGROUNDED_SENTENCE has no numeric overlap with CHUNKS, so it must go
+    # through the embedding path — which is broken here.
     with patch(
         "guard.output_guardrail.embed_texts", side_effect=RuntimeError("api down")
     ):
-        result = guardrail.validate(GROUNDED_SENTENCE, CHUNKS)
+        result = guardrail.validate(UNGROUNDED_SENTENCE, CHUNKS)
     assert not result.passed
     assert result.violations == ["guardrail_error"]
     assert result.cleaned_text == JUDGE_ERROR_MESSAGE

@@ -255,3 +255,6 @@ class ChatbotResponse(BaseModel):
     charts: list[str] = Field(
         default_factory=list,
         description="File paths of charts generated during this turn")
+    retrieved_contexts: list[str] = Field(
+        default_factory=list,
+        description="Eval-only: tool outputs this turn was grounded on. Not rendered in the UI.")
