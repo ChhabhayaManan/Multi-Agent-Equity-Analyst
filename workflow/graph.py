@@ -27,10 +27,16 @@ def build_graph():
     return builder.compile()
 
 
+def _run_config(ticker: str) -> dict:
+    return {"tags": [ticker],
+            "metadata": {"run_type": "report", "ticker": ticker}}
+
+
 def generate_report(ticker: str, company_name: str) -> dict:
     """Entry point for the frontend: returns the full GraphState."""
     graph = build_graph()
-    return graph.invoke({"ticker": ticker, "company_name": company_name})
+    return graph.invoke({"ticker": ticker, "company_name": company_name},
+                        config=_run_config(ticker))
 
 
 def stream_report(ticker: str, company_name: str) -> Iterator[dict]:
@@ -44,7 +50,7 @@ def stream_report(ticker: str, company_name: str) -> Iterator[dict]:
     last_node = None
     for update in graph.stream(
             {"ticker": ticker, "company_name": company_name},
-            stream_mode="updates"):
+            stream_mode="updates", config=_run_config(ticker)):
         for node, partial in update.items():
             last_node = node
             if partial and partial.get("runs"):
@@ -57,6 +63,9 @@ def stream_report(ticker: str, company_name: str) -> Iterator[dict]:
 
 if __name__ == "__main__":
     import sys
+
+    from utils.tracing import init_tracing
+    init_tracing()
 
     if len(sys.argv) < 2:
         print("usage: python -m workflow.graph TICKER [COMPANY_NAME]")
