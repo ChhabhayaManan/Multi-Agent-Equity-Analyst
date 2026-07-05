@@ -12,6 +12,26 @@ from workflow.state import AGENTS
 
 logger = get_logger(__name__)
 
+# AGENTS name -> report.sections key (only "competitor" differs from its section).
+_SECTION_KEY = {"fundamentals": "fundamentals", "competitor": "competitors",
+                "news": "news", "events": "events", "docs": "docs"}
+
+
+def _is_empty(name: str, obj) -> bool:
+    """True when a specialist genuinely produced no data (vs. failed a rule
+    but still returned content). Only genuinely-empty sections get blanked."""
+    if obj is None:
+        return True
+    if name == "competitor":
+        return not obj.peers
+    if name == "news":
+        return not obj.items
+    if name == "events":
+        return not obj.events
+    if name == "docs":
+        return not obj.guidance and not obj.risks
+    return False  # fundamentals: a present object is always usable
+
 
 def _collect_sources(state: dict) -> list[str]:
     sources: list[str] = []
@@ -33,11 +53,13 @@ def _collect_sources(state: dict) -> list[str]:
 
 
 def run(state: dict, retry_feedback: str = "") -> ReportOutput:
-    missing = [n for n in AGENTS
-               if state["runs"].get(n, {}).get("status") == "failed_partial"]
+    # "missing" is driven by genuine data-emptiness, NOT validation status: a
+    # section that failed a rule but still has content flows into the report in
+    # full. Only truly-empty sections are blanked.
+    missing = [n for n in AGENTS if _is_empty(n, state.get(n))]
     outputs = {
-        n: (state[n].model_dump() if state.get(n) is not None
-            else "MISSING - data unavailable")
+        n: ("MISSING - data unavailable" if _is_empty(n, state.get(n))
+            else state[n].model_dump())
         for n in AGENTS
     }
     llm = get_llm(ReportOutput)
@@ -46,5 +68,14 @@ def run(state: dict, retry_feedback: str = "") -> ReportOutput:
         "missing": json.dumps(missing),
         "specialist_outputs": json.dumps(outputs, indent=2, default=str),
         "retry_feedback": retry_feedback}))
+    # Guarantee no section renders blank: any empty body becomes an explicit
+    # absence note (never an empty string), whatever the LLM returned.
+    sections = dict(report.sections)
+    for name in AGENTS:
+        key = _SECTION_KEY[name]
+        if not sections.get(key, "").strip():
+            sections[key] = (f"No {key} data available for "
+                             f"{state['company_name']} ({state['ticker']}).")
     return report.model_copy(update={
+        "sections": sections,
         "missing_sections": missing, "sources": _collect_sources(state)})

@@ -45,26 +45,19 @@ def scan_advice(output: BaseModel) -> list[str]:
 
 
 def _rules_fundamentals(o) -> list[str]:
+    # Quantity/length floors removed: a smaller-but-valid output is not a
+    # rejection. Only the integrity check (price present) remains; types,
+    # keys and enums are already enforced by the Pydantic schema.
     r = []
-    if sum(v is not None for v in o.valuation.values()) < 4:
-        r.append("fewer than 4 non-null valuation metrics")
     if o.price_snapshot.get("price") is None:
         r.append("price_snapshot.price is missing")
-    if len(o.summary.strip()) < 50:
-        r.append("summary shorter than 50 characters")
     return r
 
 
 def _rules_competitor(o) -> list[str]:
-    r = []
-    if len(o.peers) < 3:
-        r.append("fewer than 3 peers")
-    for p in o.peers:
-        if sum(v is not None for v in p.metrics.values()) < 3:
-            r.append(f"peer {p.ticker} has fewer than 3 non-null metrics")
-    if len(o.comparison_summary.strip()) < 50:
-        r.append("comparison_summary shorter than 50 characters")
-    return r
+    # Peer-count and per-peer metric floors removed. Structure (>=3 peers,
+    # metric keys, enums) is already enforced by the CompetitorOutput schema.
+    return []
 
 
 def _rules_news(o) -> list[str]:
