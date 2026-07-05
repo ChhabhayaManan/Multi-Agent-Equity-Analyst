@@ -49,7 +49,7 @@ def _judge():
     from langchain_google_genai import ChatGoogleGenerativeAI
     from ragas.llms import LangchainLLMWrapper
     return LangchainLLMWrapper(
-        ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0))
+        ChatGoogleGenerativeAI(model="gemini-3.5-flash", temperature=0))
 
 
 def _evaluate(rows):
