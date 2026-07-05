@@ -1,0 +1,11 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Multi-Agent Equity Analyst logo">
+  <rect x="4" y="4" width="112" height="112" rx="26" fill="#0c1512"/>
+  <g transform="translate(23.2 23.2) scale(1.15)">
+    <g stroke="#eef3f0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M20 16 L10 32 L20 48"/>
+      <path d="M44 16 L54 32 L44 48"/>
+      <polyline points="24,38 30,32 34,36 40,24" stroke-width="2.8"/>
+    </g>
+    <circle cx="40" cy="24" r="3.4" fill="#c99a3f"/>
+  </g>
+</svg>
