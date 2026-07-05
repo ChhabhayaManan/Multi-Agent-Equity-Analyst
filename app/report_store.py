@@ -1,23 +1,19 @@
 """Persist final reports as one JSON file per ticker under data/reports/."""
 import json
 import os
-import re
 from pathlib import Path
 from typing import Optional
 
 from templates.schemas.outputs import ReportOutput
+from tools.pinecone_tools import namespace_of
+
+__all__ = ["namespace_of", "save_report", "load_report", "list_reports"]
 
 
 def _reports_dir() -> Path:
     d = Path(os.environ.get("REPORTS_DIR", "data/reports"))
     d.mkdir(parents=True, exist_ok=True)
     return d
-
-
-def namespace_of(ticker: str) -> str:
-    """HDFCBANK.NS -> HDFCBANK. Strips exchange suffix, keeps alnum, uppercases."""
-    base = re.sub(r"\.(NS|BO)$", "", ticker.strip(), flags=re.IGNORECASE)
-    return re.sub(r"[^A-Za-z0-9]", "", base).upper()
 
 
 def _path(ticker: str) -> Path:

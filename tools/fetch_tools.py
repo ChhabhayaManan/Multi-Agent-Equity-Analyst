@@ -8,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from utils.helpers import disk_cache, get_logger, load_config
+from utils.tracing import traceable
 
 logger = get_logger(__name__)
 
@@ -33,6 +34,7 @@ _ARTICLE_FIELDS = (
 
 
 @disk_cache(ttl_hours=6)
+@traceable(name="fetch_news_articles")
 def fetch_news_articles(ticker: str, company_name: str, hours: int = 48) -> List[dict]:
     """Fetch recent news for company_name from newsdata.io (/api/1/latest).
 
@@ -84,10 +86,10 @@ def resolve_screener_slug(ticker: str) -> str:
 
 
 @disk_cache(ttl_hours=24)
+@traceable(name="fetch_screener_page")
 def fetch_screener_page(ticker: str) -> str:
     """Raw HTML of the screener.in company page (consolidated view, standalone fallback)."""
     slug = resolve_screener_slug(ticker)
-    print(slug)
     resp = requests.get(f"{SCREENER_BASE}/{slug}/consolidated/", headers=_HEADERS, timeout=30)
     if resp.status_code == 404:
         resp = requests.get(f"{SCREENER_BASE}/{slug}/", headers=_HEADERS, timeout=30)
@@ -191,6 +193,10 @@ def fetch_annual_report_url(ticker: str) -> str:
     return link["href"]
 
 
+@traceable(
+    name="parse_pdf_to_text",
+    process_outputs=lambda out: {"chars": len(out or "")},
+)
 def parse_pdf_to_text(url: str) -> str:
     """Download a PDF and extract text with pdfplumber, pages joined by newlines.
 
@@ -208,6 +214,7 @@ def parse_pdf_to_text(url: str) -> str:
     return "\n".join(pages)
 
 
+@traceable(name="index_pdf_document")
 def index_pdf_document(url: str, ticker: str, source_type: str, meta: Optional[dict] = None) -> None:
     """Parse a PDF and store its text into Pinecone namespace=ticker in one call."""
     from tools.pinecone_tools import store_to_pinecone

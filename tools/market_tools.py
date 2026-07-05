@@ -2,25 +2,35 @@ from typing import List, Tuple
 import pandas as pd
 import yfinance as yf
 from utils.helpers import get_logger
+from utils.tracing import traceable
 
 logger = get_logger(__name__)
 
 
+_EXCHANGE_NAMES = {"NSI": "NSE", "BSE": "BSE"}
+
+
 def search_ticker(query: str) -> List[dict]:
-    quotes = yf.Search(query, enable_fuzzy_query=True).quotes
+    # yf.Search ranks by global relevance and frequently omits the NSE/BSE
+    # listing entirely for common Indian company names (e.g. "Infosys",
+    # "TCS", "HDFC Bank") in favor of NYSE ADRs or unrelated tickers.
+    # yf.Lookup returns every matching symbol unranked, so the NSE/BSE
+    # listing is reliably present.
+    df = yf.Lookup(query).get_stock(count=25)
     results = [
         {
-            "ticker": q.get("symbol"),
-            "name": q.get("longname") or q.get("shortname"),
-            "exchange": q.get("exchDisp") or q.get("exchange"),
+            "ticker": symbol,
+            "name": row["shortName"],
+            "exchange": _EXCHANGE_NAMES.get(row["exchange"], row["exchange"]),
         }
-        for q in quotes
-        if q.get("quoteType") == "EQUITY" and q.get("symbol")
+        for symbol, row in df.iterrows()
+        if row.get("quoteType") == "equity" and symbol
     ]
     results.sort(key=lambda r: not r["ticker"].endswith(".NS"))
     return results
 
 
+@traceable(name="get_stock_info")
 def get_stock_info(ticker: str) -> dict:
     info = yf.Ticker(ticker).info
     return {
@@ -31,10 +41,12 @@ def get_stock_info(ticker: str) -> dict:
     }
 
 
+@traceable(name="get_price_history")
 def get_price_history(ticker: str, period: str = "1mo") -> pd.DataFrame:
     return yf.Ticker(ticker).history(period=period)
 
 
+@traceable(name="get_fundamentals")
 def get_fundamentals(ticker: str) -> dict:
     info = yf.Ticker(ticker).info
     return {
@@ -52,6 +64,7 @@ def get_live_price(ticker: str) -> float:
     return float(yf.Ticker(ticker).fast_info["lastPrice"])
 
 
+@traceable(name="search_sector_peers")
 def search_sector_peers(sector: str, mktcap_range: Tuple[float, float]) -> List[str]:
     """Return NSE tickers in `sector` whose market cap (INR) falls in mktcap_range.
 

@@ -1,12 +1,25 @@
+import re
 import time
 from typing import List, Optional
 from pinecone import Pinecone, ServerlessSpec
 from utils.helpers import get_logger, load_config
+from utils.tracing import traceable
 logger = get_logger(__name__)
 
 INDEX_NAME = "stock-research"
 EMBED_MODEL = "llama-text-embed-v2"
 EMBED_DIM = 1024
+
+
+def namespace_of(ticker: str) -> str:
+    """HDFCBANK.NS -> HDFCBANK. Strips exchange suffix, keeps alnum, uppercases.
+
+    Pinecone namespaces are per-company (spec: one namespace per ticker, e.g.
+    "HDFCBANK"), but callers hold the exchange-suffixed symbol (e.g.
+    "HDFCBANK.NS") because that's what yfinance needs for market data. Every
+    public function below normalizes through this so callers never have to."""
+    base = re.sub(r"\.(NS|BO)$", "", ticker.strip(), flags=re.IGNORECASE)
+    return re.sub(r"[^A-Za-z0-9]", "", base).upper()
 
 _pc: Optional[Pinecone] = None
 _index = None
@@ -37,6 +50,14 @@ def get_index():
     return _index
 
 
+@traceable(
+    name="embed_texts",
+    # Raw texts + 1024-float vectors are megabytes; log only sizes so the
+    # trace payload stays small (a full run once hit 12.9 MB and failed to POST).
+    process_inputs=lambda inp: {"n_texts": len(inp.get("texts") or []),
+                                "input_type": inp.get("input_type")},
+    process_outputs=lambda out: {"n_vectors": len(out or [])},
+)
 def embed_texts(texts: List[str], input_type: str = "passage") -> List[List[float]]:
     """Embed via Pinecone hosted inference. input_type: 'passage' for docs, 'query' for queries."""
     pc = _get_client()
@@ -52,7 +73,7 @@ def embed_texts(texts: List[str], input_type: str = "passage") -> List[List[floa
     return vectors
 
 
-def _chunk_text(text: str, size: int = 500, overlap: int = 50) -> List[str]:
+def _chunk_text(text: str, size: int = 2000, overlap: int = 200) -> List[str]:
     if len(text) <= size:
         return [text] if text.strip() else []
     chunks = []
@@ -67,6 +88,7 @@ def _chunk_text(text: str, size: int = 500, overlap: int = 50) -> List[str]:
 
 def check_index(ticker: str, source_type: str) -> bool:
     """True if namespace=ticker holds at least one vector tagged with source_type."""
+    ticker = namespace_of(ticker)
     index = get_index()
     stats = index.describe_index_stats()
     ns = stats.namespaces or {}
@@ -82,6 +104,12 @@ def check_index(ticker: str, source_type: str) -> bool:
     return len(res.matches) > 0
 
 
+@traceable(
+    name="store_to_pinecone",
+    process_inputs=lambda inp: {"ticker": inp.get("ticker"),
+                                "n_docs": len(inp.get("docs") or []),
+                                "source_type": inp.get("source_type")},
+)
 def store_to_pinecone(
     ticker: str, docs: List[str], source_type: str, meta: Optional[dict] = None
 ) -> None:
@@ -90,6 +118,7 @@ def store_to_pinecone(
     Each vector's metadata carries source_type, ticker, chunk_id, the chunk text
     itself (so queries can return it), plus any caller-supplied meta (date, document_id).
     """
+    ticker = namespace_of(ticker)
     index = get_index()
     chunks: List[str] = []
     for doc in docs:
@@ -114,6 +143,7 @@ def store_to_pinecone(
     logger.info("Upserted %d vectors to %s/%s (%s)", len(vectors), INDEX_NAME, ticker, source_type)
 
 
+@traceable(name="query_pinecone")
 def query_pinecone(
     ticker: str, query: str, source_type: Optional[str] = None, k: int = 5
 ) -> List[dict]:
@@ -122,6 +152,7 @@ def query_pinecone(
     source_type=None searches across all source types.
     Returns [{text, score, metadata}] sorted by score desc.
     """
+    ticker = namespace_of(ticker)
     index = get_index()
     query_vec = embed_texts([query], input_type="query")[0]
     res = index.query(
@@ -143,6 +174,7 @@ def query_pinecone(
 
 def namespace_exists(ticker: str) -> bool:
     """True if namespace=ticker holds at least one vector."""
+    ticker = namespace_of(ticker)
     stats = get_index().describe_index_stats()
     ns = stats.namespaces or {}
     return ticker in ns and getattr(ns[ticker], "vector_count", 0) > 0
@@ -160,6 +192,7 @@ def list_documents(ticker: str) -> dict:
     Returns {source_type: [{document_id, date, source_type, chunk_count}]}, one
     entry per distinct document_id (chunks collapsed). {} if namespace absent.
     """
+    ticker = namespace_of(ticker)
     if not namespace_exists(ticker):
         return {}
     index = get_index()
@@ -187,6 +220,7 @@ def list_documents(ticker: str) -> dict:
 
 def delete_namespace(ticker: str) -> None:
     """Drop every vector in namespace=ticker. No-op if the namespace is absent."""
+    ticker = namespace_of(ticker)
     try:
         get_index().delete(delete_all=True, namespace=ticker)
         logger.info("Deleted namespace %s from %s", ticker, INDEX_NAME)
@@ -196,6 +230,7 @@ def delete_namespace(ticker: str) -> None:
         raise
 
 
+@traceable(name="wait_for_vectors")
 def wait_for_vectors(ticker: str, timeout_s: int = 20) -> bool:
     """Poll until namespace=ticker is visible (serverless is eventually
     consistent between upsert and query). True once visible, False on timeout."""
