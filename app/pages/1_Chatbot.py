@@ -3,14 +3,21 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from app.report_store import list_reports
-from app.ui_helpers import chart_iframe_html
+from app.ui_helpers import chart_iframe_html, css_block
 from chatbot.chatbot_agent import ChatSession
 from tools.pinecone_tools import list_documents, namespace_exists
 from utils.tracing import init_tracing
 
 init_tracing()
 
+st.set_page_config(page_title="Research Chatbot", page_icon="💬", layout="wide")
+st.markdown(css_block(), unsafe_allow_html=True)
+
 st.title("💬 Research Chatbot")
+st.caption("Answers grounded in this company's indexed documents only.")
+st.divider()
+
+AVATARS = {"user": "🧑", "assistant": "📈"}
 
 # Candidate tickers: those with saved reports (each implies an indexed namespace).
 reports = list_reports()
@@ -46,26 +53,33 @@ with doc_col:
     if not docs:
         st.caption("No documents found.")
     for source_type in sorted(docs.keys()):
-        st.markdown(f"**{source_type}**")
-        for d in docs[source_type]:
-            date = f" · {d['date']}" if d.get("date") else ""
-            st.caption(f"{d['document_id']}{date}")
+        items = docs[source_type]
+        with st.container(border=True):
+            st.markdown(f"**{source_type}** "
+                        f"<span class='pill'>{len(items)}</span>",
+                        unsafe_allow_html=True)
+            for d in items:
+                date = f" · {d['date']}" if d.get("date") else ""
+                st.caption(f"{d['document_id']}{date}")
 
 with chat_col:
     for turn in history:
-        with st.chat_message(turn["role"]):
+        with st.chat_message(turn["role"], avatar=AVATARS.get(turn["role"])):
             st.markdown(turn["content"])
             for chart in turn.get("charts", []):
                 html = chart_iframe_html(chart)
                 if html:
                     components.html(html, height=420, scrolling=True)
 
-    prompt = st.chat_input(f"Ask about {company_name}…")
-    if prompt:
+# chat_input at top level (not inside a column) so it pins to the page bottom;
+# new turns render into chat_col above it, keeping order user -> assistant.
+prompt = st.chat_input(f"Ask about {company_name}…")
+if prompt:
+    with chat_col:
         history.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=AVATARS["user"]):
             st.markdown(prompt)
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=AVATARS["assistant"]):
             status = st.status("Thinking…", expanded=False)
             # `ask` emits status lines via the private _status hook; wire it per turn.
             session._status = lambda line: status.update(label=line)
