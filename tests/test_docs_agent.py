@@ -67,3 +67,21 @@ def test_no_annual_report_is_nonfatal(patched, monkeypatch):
     monkeypatch.setattr(mod, "fetch_annual_report_url", boom)
     _, fetch_count = mod.run("HDFCBANK.NS", "HDFC Bank Ltd")
     assert fetch_count == 12
+
+
+def test_indexes_pdf_workers_with_copied_context(patched, monkeypatch):
+    mod, calls = patched
+    ctx_runs = []
+
+    class FakeContext:
+        def run(self, fn, *args, **kwargs):
+            ctx_runs.append(fn.__name__)
+            return fn(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "copy_context", lambda: FakeContext())
+
+    _, fetch_count = mod.run("HDFCBANK.NS", "HDFC Bank Ltd")
+
+    assert fetch_count == 13
+    assert len(ctx_runs) == 13
+    assert len(calls["indexed"]) == 13

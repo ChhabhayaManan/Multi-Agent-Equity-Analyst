@@ -20,6 +20,7 @@ def load_config() -> dict:
         "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
         "ALPHAVANTAGE_API_KEY": os.getenv("ALPHAVANTAGE_API_KEY")
         or os.getenv("ALPHA_VANTAGE_API"),
+        "HUGGINGFACEHUB_API_TOKEN": os.getenv("HUGGINGFACEHUB_API_TOKEN"),
     }
 
 

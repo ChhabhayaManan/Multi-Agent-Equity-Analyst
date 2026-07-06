@@ -11,7 +11,7 @@ AGENTS = ("fundamentals", "competitor", "news", "events", "docs")
 
 
 class AgentRun(TypedDict):
-    status: Literal["pending", "running", "passed", "failed_partial"]
+    status: Literal["pending", "running", "passed", "no_data", "failed_partial"]
     attempts: int                 # validator-level attempts (1..3)
     failure_reasons: list[str]    # validator feedback; injected on retry
     fetch_count: int              # raw items fetched; 0 = source empty, -1 = unknown (agent error)

@@ -1,7 +1,8 @@
 """LLM factory for all agents.
 
-Groq (llama-3.3-70b-versatile) primary; per-call backoff 10/15/20s (+/-2s
-jitter) on rate limits, then a single Gemini (gemini-2.0-flash) fallback.
+Fallback ladder per invoke(): Groq llama-3.3-70b -> Groq openai/gpt-oss-120b-> Gemini. Each Groq client carries a 15s request timeout; a rate-limit (429)
+or timeout on one tier fails over immediately to the next (no backoff sleeps —
+the 8b model is a separate rate bucket, and Gemini is the final safety net).
 
 Concurrency: 5 graph branches call this in parallel. There is deliberately
 NO module-level "current provider" state — a flag flipped by one branch's
@@ -11,8 +12,6 @@ each invoke() call.
 """
 
 import os
-import random
-import time
 from functools import lru_cache
 from typing import Optional, Type
 
@@ -22,16 +21,16 @@ from utils.helpers import get_logger, load_config
 
 logger = get_logger(__name__)
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GEMINI_MODEL = "gemini-3.5-flash"
-_BACKOFF_S = (10, 15, 20)
-_JITTER_S = 2
+# Tier order: 70b (best quality) first, 8b-instant (fast, separate bucket) next.
+GROQ_MODELS = ("llama-3.3-70b-versatile", "meta-llama/llama-4-scout-17b-16e-instruct")
+GEMINI_MODEL = "gemini-2.5-flash"
+GROQ_TIMEOUT_S = 15
 
 
-@lru_cache(maxsize=1)
-def _groq():
+@lru_cache(maxsize=None)
+def _groq(model: str = GROQ_MODELS[0]):
     from langchain_groq import ChatGroq
-    return ChatGroq(model=GROQ_MODEL, temperature=0,
+    return ChatGroq(model=model, temperature=0, timeout=GROQ_TIMEOUT_S,
                     api_key=load_config()["GROQ_API_KEY"])
 
 
@@ -52,8 +51,15 @@ def _is_rate_limit(exc: Exception) -> bool:
             or "ratelimit" in type(exc).__name__.lower())
 
 
+def _is_timeout(exc: Exception) -> bool:
+    return ("timeout" in str(exc).lower()
+            or "timeout" in type(exc).__name__.lower())
+
+
 class _BackoffLLM:
-    """Per-call Groq backoff + Gemini fallback. No shared mutable state."""
+    """Per-call Groq ladder (70b -> 8b) + Gemini fallback. No shared state.
+    Any exception on a tier fails over to the next; the last exception is
+    raised only if Gemini also fails."""
 
     def __init__(self, schema: Optional[Type[BaseModel]] = None):
         self._schema = schema
@@ -62,23 +68,16 @@ class _BackoffLLM:
         return model.with_structured_output(self._schema) if self._schema else model
 
     def invoke(self, input, **kwargs):
-        primary = self._bind(_groq())
-        for delay in _BACKOFF_S:
+        for model in GROQ_MODELS:
             try:
-                return primary.invoke(input, **kwargs)
+                return self._bind(_groq(model)).invoke(input, **kwargs)
             except Exception as e:
-                if not _is_rate_limit(e):
-                    raise
-                wait = delay + random.uniform(-_JITTER_S, _JITTER_S)
-                logger.warning("Groq rate-limited; sleeping %.1fs", wait)
-                time.sleep(wait)
-        try:
-            return primary.invoke(input, **kwargs)
-        except Exception as e:
-            if not _is_rate_limit(e):
-                raise
-            logger.warning("Groq still rate-limited; falling back to Gemini")
-            return self._bind(_gemini()).invoke(input, **kwargs)
+                reason = ("rate limit" if _is_rate_limit(e)
+                          else "timeout" if _is_timeout(e) else "error")
+                logger.warning("Groq %s failed (%s: %s); trying next tier",
+                               model, reason, e)
+        logger.warning("All Groq tiers failed; falling back to Gemini")
+        return self._bind(_gemini()).invoke(input, **kwargs)
 
 
 def get_llm(structured_schema: Optional[Type[BaseModel]] = None):

@@ -2,6 +2,7 @@
 report -> Pinecone -> 5 fixed retrieval queries -> structured extraction."""
 
 import json
+from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from templates.prompts.financial_docs_analyzer import DOCS_PROMPT
@@ -41,7 +42,7 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
     indexed = 0
     with ThreadPoolExecutor(max_workers=INDEX_WORKERS) as pool:
         futures = {
-            pool.submit(index_pdf_document, url, ticker, "docs",
+            pool.submit(copy_context().run, index_pdf_document, url, ticker, "docs",
                         {"document_id": doc_id}): url
             for url, doc_id in jobs
         }

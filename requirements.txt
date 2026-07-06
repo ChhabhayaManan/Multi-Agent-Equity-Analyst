@@ -25,3 +25,5 @@ xhtml2pdf
 langsmith
 ragas
 datasets
+langchain-huggingface
+huggingface_hub

@@ -1,6 +1,8 @@
 import time
 import types
 import uuid
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -44,14 +46,62 @@ def stored_docs():
 
 
 def test_chunk_text():
-    from tools.pinecone_tools import _chunk_text
+    from tools.pinecone_tools import GeminiEmbedder
 
+    embedder = GeminiEmbedder("fake-key")
+    embedder.chunk_size = 500
+    embedder.chunk_overlap = 50
     text = "x" * 1200
-    chunks = _chunk_text(text, size=500, overlap=50)
+    chunks = embedder.chunk_text(text)
     assert all(len(c) <= 500 for c in chunks)
     assert sum(len(c) for c in chunks) >= 1200  # overlap means total >= original
-    assert _chunk_text("short") == ["short"]
-    assert _chunk_text("   ") == []
+    assert embedder.chunk_text("short") == ["short"]
+    assert embedder.chunk_text("   ") == []
+
+
+def test_select_embedder_round_robins_api_keys(monkeypatch):
+    router = pinecone_tools._GeminiRouter(["key-1", "key-2", "key-3"])
+    monkeypatch.setattr(pinecone_tools, "_router", router)
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        selected = list(pool.map(lambda _: pinecone_tools.select_embedder().api_key, range(6)))
+
+    assert Counter(selected) == Counter({"key-1": 2, "key-2": 2, "key-3": 2})
+
+
+def test_embed_texts_retries_on_quota_error(monkeypatch):
+    class FakeClient:
+        def __init__(self, key, fail=False):
+            self.key = key
+            self.fail = fail
+            self.calls = 0
+
+        def embed_documents(self, texts, **kwargs):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("429 rate limit exceeded")
+            return [[float(len(self.key))] * pinecone_tools.EMBED_DIM for _ in texts]
+
+        def embed_query(self, text, **kwargs):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("429 rate limit exceeded")
+            return [float(len(self.key))] * pinecone_tools.EMBED_DIM
+
+    clients = {
+        "key-1": FakeClient("key-1", fail=True),
+        "key-2": FakeClient("key-2"),
+        "key-3": FakeClient("key-3"),
+    }
+    monkeypatch.setattr(pinecone_tools, "_router", pinecone_tools._GeminiRouter(list(clients)))
+    monkeypatch.setattr(pinecone_tools, "_gemini_client", lambda api_key: clients[api_key])
+
+    vectors = pinecone_tools.embed_texts(["hello", "world"], input_type="passage")
+
+    assert len(vectors) == 2
+    assert clients["key-1"].calls == 1
+    assert clients["key-2"].calls == 1
+    assert clients["key-3"].calls == 0
 
 
 @needs_key

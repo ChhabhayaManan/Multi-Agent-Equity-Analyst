@@ -1,14 +1,56 @@
 import re
+import os
 import time
+from functools import lru_cache
 from typing import List, Optional
+from threading import Lock
 from pinecone import Pinecone, ServerlessSpec
+from abc import ABC, abstractmethod
 from utils.helpers import get_logger, load_config
 from utils.tracing import traceable
+
 logger = get_logger(__name__)
 
 INDEX_NAME = "stock-research"
-EMBED_MODEL = "llama-text-embed-v2"
-EMBED_DIM = 1024
+INDEX_NAME = "stock-research-gemini-3072"
+EMBED_DIM = 3072
+GEMINI_MODEL = "gemini-embedding-2-preview"
+GEMINI_BATCH_SIZE = 100
+
+
+def _split_keys(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    return [part.strip() for part in re.split(r"[\n,;]+", raw) if part.strip()]
+
+
+def _google_api_keys() -> List[str]:
+    keys: List[str] = []
+    cfg = load_config()
+    keys.extend(_split_keys(cfg.get("GOOGLE_API_KEY")))
+    keys.extend(_split_keys(os.getenv("GOOGLE_API_KEYS")))
+    keys.extend(_split_keys(os.getenv("GEMINI_API_KEY")))
+    for suffix in ("1", "2", "3"):
+        keys.extend(_split_keys(os.getenv(f"GOOGLE_API_KEY_{suffix}")))
+        keys.extend(_split_keys(os.getenv(f"GEMINI_API_KEY_{suffix}")))
+    deduped: List[str] = []
+    seen = set()
+    for key in keys:
+        if key not in seen:
+            seen.add(key)
+            deduped.append(key)
+    return deduped
+
+
+@lru_cache(maxsize=None)
+def _gemini_client(api_key: str):
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+    return GoogleGenerativeAIEmbeddings(
+        model=GEMINI_MODEL,
+        api_key=api_key,
+        output_dimensionality=EMBED_DIM,
+    )
 
 
 def namespace_of(ticker: str) -> str:
@@ -50,40 +92,134 @@ def get_index():
     return _index
 
 
+class Embedder(ABC):
+    chunk_size: int
+    chunk_overlap: int
+    
+    def chunk_text(self, text: str) -> List[str]:
+        if len(text) <= self.chunk_size:
+            return [text] if text.strip() else []
+        chunks = []
+        start = 0
+        while start < len(text):
+            chunk = text[start : start + self.chunk_size]
+            if chunk.strip():
+                chunks.append(chunk)
+            start += self.chunk_size - self.chunk_overlap
+        return chunks
+
+    @abstractmethod
+    def embed(self, texts: List[str], input_type: str = "passage") -> List[List[float]]:
+        pass
+
+class GeminiEmbedder(Embedder):
+    chunk_size = 24000
+    chunk_overlap = 2000
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+    
+    def embed(self, texts: List[str], input_type: str = "passage") -> List[List[float]]:
+        client = _gemini_client(self.api_key)
+        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
+        if len(texts) == 1:
+            return [client.embed_query(
+                texts[0],
+                task_type=task_type,
+                output_dimensionality=EMBED_DIM,
+            )]
+        return client.embed_documents(
+            texts,
+            batch_size=GEMINI_BATCH_SIZE,
+            task_type=task_type,
+            output_dimensionality=EMBED_DIM,
+        )
+
+class _GeminiRouter:
+    def __init__(self, api_keys: List[str]):
+        if not api_keys:
+            raise RuntimeError("No Google/Gemini embedding API keys configured.")
+        self._api_keys = api_keys
+        self._cursor = 0
+        self._lock = Lock()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._cursor = 0
+
+    def size(self) -> int:
+        return len(self._api_keys)
+
+    def next_key(self) -> str:
+        with self._lock:
+            key = self._api_keys[self._cursor]
+            self._cursor = (self._cursor + 1) % len(self._api_keys)
+            return key
+
+    def select(self) -> GeminiEmbedder:
+        return GeminiEmbedder(self.next_key())
+
+
+_router: Optional[_GeminiRouter] = None
+
+
+def _get_router() -> _GeminiRouter:
+    global _router
+    if _router is None:
+        _router = _GeminiRouter(_google_api_keys())
+    return _router
+
+
+def reset_embed_floor():
+    if _router is not None:
+        _router.reset()
+
+
+def get_current_embedder() -> Embedder:
+    return _get_router().select()
+
+
+def select_embedder() -> Embedder:
+    return get_current_embedder()
+
+
+def advance_embedder_tier():
+    if _router is not None:
+        _router.next_key()
+
+def is_quota_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return ("429" in text or "resource_exhausted" in text
+            or "quota" in text or "rate limit" in text
+            or "rate_limit" in text or "token limit" in text)
+
+
+def _embed_with_round_robin(texts: List[str], input_type: str) -> List[List[float]]:
+    last_error: Optional[Exception] = None
+    router = _get_router()
+    for _ in range(router.size()):
+        embedder = router.select()
+        try:
+            return embedder.embed(texts, input_type)
+        except Exception as exc:
+            if not is_quota_error(exc):
+                raise
+            last_error = exc
+            logger.warning("Gemini key %s quota exhausted; trying next", embedder.api_key)
+    if last_error is not None:
+        raise last_error
+    return []
+
+
 @traceable(
     name="embed_texts",
-    # Raw texts + 1024-float vectors are megabytes; log only sizes so the
-    # trace payload stays small (a full run once hit 12.9 MB and failed to POST).
     process_inputs=lambda inp: {"n_texts": len(inp.get("texts") or []),
                                 "input_type": inp.get("input_type")},
     process_outputs=lambda out: {"n_vectors": len(out or [])},
 )
 def embed_texts(texts: List[str], input_type: str = "passage") -> List[List[float]]:
-    """Embed via Pinecone hosted inference. input_type: 'passage' for docs, 'query' for queries."""
-    pc = _get_client()
-    vectors: List[List[float]] = []
-    # llama-text-embed-v2 rejects >96 inputs per request (400 INVALID_ARGUMENT).
-    for start in range(0, len(texts), 96):
-        result = pc.inference.embed(
-            model=EMBED_MODEL,
-            inputs=texts[start : start + 96],
-            parameters={"input_type": input_type, "truncate": "END"},
-        )
-        vectors.extend(item.values for item in result.data)
-    return vectors
-
-
-def _chunk_text(text: str, size: int = 2000, overlap: int = 200) -> List[str]:
-    if len(text) <= size:
-        return [text] if text.strip() else []
-    chunks = []
-    start = 0
-    while start < len(text):
-        chunk = text[start : start + size]
-        if chunk.strip():
-            chunks.append(chunk)
-        start += size - overlap
-    return chunks
+    """Embed via Gemini key rotation. input_type: 'passage' for docs, 'query' for queries."""
+    return _embed_with_round_robin(texts, input_type)
 
 
 def check_index(ticker: str, source_type: str) -> bool:
@@ -113,20 +249,19 @@ def check_index(ticker: str, source_type: str) -> bool:
 def store_to_pinecone(
     ticker: str, docs: List[str], source_type: str, meta: Optional[dict] = None
 ) -> None:
-    """Chunk (~500 chars / 50 overlap), embed as passages, upsert into namespace=ticker.
-
-    Each vector's metadata carries source_type, ticker, chunk_id, the chunk text
-    itself (so queries can return it), plus any caller-supplied meta (date, document_id).
-    """
+    """Chunk dynamically by model limit, embed, upsert into namespace=ticker."""
     ticker = namespace_of(ticker)
     index = get_index()
+    doc_key = (meta or {}).get("document_id", f"{source_type}-{int(time.time())}")
+
+    chunker = GeminiEmbedder(api_key="")
     chunks: List[str] = []
     for doc in docs:
-        chunks.extend(_chunk_text(doc))
+        chunks.extend(chunker.chunk_text(doc))
     if not chunks:
         return
-    embeddings = embed_texts(chunks, input_type="passage")
-    doc_key = (meta or {}).get("document_id", f"{source_type}-{int(time.time())}")
+
+    embeddings = _embed_with_round_robin(chunks, input_type="passage")
     vectors = []
     for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
         metadata = {
@@ -147,11 +282,7 @@ def store_to_pinecone(
 def query_pinecone(
     ticker: str, query: str, source_type: Optional[str] = None, k: int = 5
 ) -> List[dict]:
-    """Semantic search within namespace=ticker, optionally filtered by source_type.
-
-    source_type=None searches across all source types.
-    Returns [{text, score, metadata}] sorted by score desc.
-    """
+    """Semantic search within namespace=ticker, optionally filtered by source_type."""
     ticker = namespace_of(ticker)
     index = get_index()
     query_vec = embed_texts([query], input_type="query")[0]
@@ -187,11 +318,7 @@ def _doc_id_from_vid(vid: str, ticker: str) -> str:
 
 
 def list_documents(ticker: str) -> dict:
-    """Distinct indexed documents in namespace=ticker, grouped by source_type.
-
-    Returns {source_type: [{document_id, date, source_type, chunk_count}]}, one
-    entry per distinct document_id (chunks collapsed). {} if namespace absent.
-    """
+    """Distinct indexed documents in namespace=ticker, grouped by source_type."""
     ticker = namespace_of(ticker)
     if not namespace_exists(ticker):
         return {}
