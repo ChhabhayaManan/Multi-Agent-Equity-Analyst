@@ -1,9 +1,8 @@
 import re
 from datetime import datetime, timedelta
-from io import BytesIO
 from typing import List, Optional
 
-import pdfplumber
+import fitz  # PyMuPDF
 import requests
 from bs4 import BeautifulSoup
 
@@ -198,17 +197,19 @@ def fetch_annual_report_url(ticker: str) -> str:
     process_outputs=lambda out: {"chars": len(out or "")},
 )
 def parse_pdf_to_text(url: str) -> str:
-    """Download a PDF and extract text with pdfplumber, pages joined by newlines.
+    """Download a PDF and extract text with PyMuPDF, pages joined by newlines.
 
-    No OCR — assumes digitally-generated PDFs. Table column alignment is
-    best-effort; dense financial tables may not be perfectly preserved.
+    PyMuPDF (fitz) is ~20-30x faster than pdfplumber on large (200-400pg)
+    annual reports, which dominated the docs branch latency. No OCR — assumes
+    digitally-generated PDFs; layout/column order is not preserved, which is
+    fine since the text is chunked and embedded for semantic search.
     """
     resp = requests.get(url, headers=_HEADERS, timeout=60)
     resp.raise_for_status()
     pages = []
-    with pdfplumber.open(BytesIO(resp.content)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
+    with fitz.open(stream=resp.content, filetype="pdf") as doc:
+        for page in doc:
+            text = page.get_text()
             if text:
                 pages.append(text)
     return "\n".join(pages)

@@ -111,7 +111,7 @@ def test_empty_data_no_retry(gr, monkeypatch):
                         {**nodes.AGENT_RUNNERS, "news": empty})
     from workflow.graph import build_graph
     state = build_graph().invoke({"ticker": "T.NS", "company_name": "T Ltd"})
-    assert state["runs"]["news"]["status"] == "failed_partial"
+    assert state["runs"]["news"]["status"] == "no_data"
     assert len(calls) == 1                           # no retry on empty source
 
 
