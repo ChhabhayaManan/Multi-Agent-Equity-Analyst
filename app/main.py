@@ -28,7 +28,8 @@ PROGRESS_LABELS = {
     "fundamentals": "Company & Fundamentals", "competitor": "Competitive Landscape",
     "news": "News Analysis", "events": "Event Timeline",
     "docs": "Financial Documents", "synthesis": "Synthesis"}
-_ICONS = {"passed": "✅", "failed_partial": "⚠️", "running": "🔄", "pending": "⏳"}
+_ICONS = {"passed": "✅", "no_data": "📭", "failed_partial": "⚠️",
+          "running": "🔄", "pending": "⏳"}
 
 st.set_page_config(page_title="Stock Research Platform",
                    page_icon="📈", layout="wide")
@@ -189,7 +190,10 @@ def _render_report(stored: dict) -> None:
     for tab, key in zip(tabs, SECTION_ORDER):
         with tab:
             if section_note(report.missing_sections, key):
-                st.info("Data unavailable for this section.")
+                if key == "news":
+                    st.info("No recent news found for this stock.")
+                else:
+                    st.info("Data unavailable for this section.")
             else:
                 _render_section(key, report.sections.get(key, ""))
     if report.sources:
