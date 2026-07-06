@@ -2,18 +2,20 @@
 report -> Pinecone -> 5 fixed retrieval queries -> structured extraction."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from templates.prompts.financial_docs_analyzer import DOCS_PROMPT
 from templates.schemas.outputs import DocsOutput
 from tools.fetch_tools import (fetch_annual_report_url, fetch_concall_transcripts,
                                index_pdf_document)
-from tools.pinecone_tools import query_pinecone, wait_for_vectors
+from tools.pinecone_tools import get_index, query_pinecone, wait_for_vectors
 from utils.helpers import get_logger
 from utils.llm import get_llm
 
 logger = get_logger(__name__)
 
 MAX_TRANSCRIPTS = 12
+INDEX_WORKERS = 6  # concurrent PDF download+parse+embed+upsert jobs
 QUERIES = (
     "revenue margin growth guidance targets",
     "risk factors headwinds concerns flagged by management",
@@ -24,20 +26,31 @@ QUERIES = (
 
 
 def run(ticker: str, company_name: str, retry_feedback: str = ""):
-    indexed = 0
-    for t in fetch_concall_transcripts(ticker)[:MAX_TRANSCRIPTS]:
-        try:
-            index_pdf_document(t["url"], ticker, "docs",
-                               meta={"document_id": f"concall-{t.get('date', 'unknown')}"})
-            indexed += 1
-        except Exception:
-            logger.exception("docs: failed to index transcript %s", t.get("url"))
+    # Build the list of (url, document_id) to index: concall transcripts + the
+    # latest annual report. Each job is an independent PDF download+parse+embed
+    # +upsert, so they run concurrently instead of one-at-a-time (the old
+    # sequential loop was the dominant latency in this branch).
+    jobs = [(t["url"], f"concall-{t.get('date', 'unknown')}")
+            for t in fetch_concall_transcripts(ticker)[:MAX_TRANSCRIPTS]]
     try:
-        ar_url = fetch_annual_report_url(ticker)
-        index_pdf_document(ar_url, ticker, "docs", meta={"document_id": "annual-report"})
-        indexed += 1
+        jobs.append((fetch_annual_report_url(ticker), "annual-report"))
     except Exception:
-        logger.warning("docs: no annual report indexed for %s", ticker)
+        logger.warning("docs: no annual report found for %s", ticker)
+
+    get_index()  # warm the shared Pinecone singleton before spawning threads
+    indexed = 0
+    with ThreadPoolExecutor(max_workers=INDEX_WORKERS) as pool:
+        futures = {
+            pool.submit(index_pdf_document, url, ticker, "docs",
+                        {"document_id": doc_id}): url
+            for url, doc_id in jobs
+        }
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+                indexed += 1
+            except Exception:
+                logger.exception("docs: failed to index %s", futures[fut])
 
     contexts: dict[str, list] = {}
     if indexed:
