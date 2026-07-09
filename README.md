@@ -9,7 +9,7 @@
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-orchestration-1C3C3C?logo=langchain&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-F55036?logo=meta&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini-fallback-8E75B2?logo=googlegemini&logoColor=white)
+<!-- ![Gemini](https://img.shields.io/badge/Gemini-fallback-8E75B2?logo=googlegemini&logoColor=white) -->
 ![Pinecone](https://img.shields.io/badge/Pinecone-vector_store-000000?logo=pinecone&logoColor=white)
 ![Cohere](https://img.shields.io/badge/Cohere-rerank-39594D?logo=cohere&logoColor=white)
 ![GuardrailsAI](https://img.shields.io/badge/Guardrails-input%2Foutput-4B0082)
@@ -17,23 +17,23 @@
 ![RAGAS](https://img.shields.io/badge/RAGAS-eval-FF4B4B)
 ![MCP](https://img.shields.io/badge/MCP-Alpha_Vantage-663399)
 ![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)
+![NVIDIA](https://img.shields.io/badge/NVIDIA-nv--embed--v1-F55036?logo=nvidia&logoColor=white)
 
 </div>
 
 > **Scope by design:** NSE/BSE equities only · read-only data everywhere · **no buy/sell/hold/recommend language anywhere** · every chatbot claim is cited or stripped. This is a research-skills demo, **not** investment advice.
 
----
+<!-- ---
 
 ## 🎬 Demo
 
-<!-- TODO: replace with your demo thumbnail + video link -->
 [![Watch the demo](assets/demo-thumbnail.png)](https://your-demo-video-link)
 
-**▶️ Try it live:** <!-- TODO: HuggingFace Space URL -->[Multi-Agent Equity Analyst on 🤗 Spaces](https://huggingface.co/spaces/your-space)
+**▶️ Try it live:** [Multi-Agent Equity Analyst on 🤗 Spaces](https://huggingface.co/spaces/your-space)
 
 <sub>Hosted on a free HuggingFace Space — it sleeps when idle and takes ~30s to wake on first request.</sub>
 
----
+--- -->
 
 ## 💡 The Idea
 
@@ -64,13 +64,12 @@ Retail equity research is scattered across filings, concalls, news, and peer dat
 
 ## 🏛️ Architecture — Agentic Report Workflow
 
-<!-- TODO: export the Eraser diagram to assets/diagram-workflow.png -->
 ![Agentic workflow](assets/diagram-workflow.png)
 
 A ticker fans out to **five specialists running in parallel**. Each is a two-step node — `run` then `validate` — and a conditional router either **retries** (injecting the validator's feedback, up to 3 attempts) or **joins**. Synthesis is deferred until all five branches settle, then merges them into one structured report.
 
 - **Shared Pinecone index** `stock-research` (serverless), **one namespace per ticker** (e.g. `HDFCBANK`), vectors tagged with `source_type` (`news \| docs \| events \| competitor \| report`). Each agent filters by its own `source_type`.
-- **Embeddings:** Pinecone-hosted `llama-text-embed-v2` (no local model).
+- **Embeddings:** NVIDIA NIM hosted `nvidia/nv-embed-v1` (4096-dim, requires `NVIDIA_API_KEY`).
 - **Report ≠ guarded:** the synthesized report is **not** run through guardrails — agents rely on their system prompts for no-advice tone. Guardrails gate the **chatbot only** (below). This is a deliberate, honest scope choice.
 
 | Agent | Pattern | Output section |
@@ -86,7 +85,6 @@ A ticker fans out to **five specialists running in parallel**. Each is a two-ste
 
 ## 💬 Architecture — Chatbot + Guardrails
 
-<!-- TODO: export the Eraser diagram to assets/diagram-chatbot.png -->
 ![Chatbot and guardrails](assets/diagram-chatbot.png)
 
 Every turn is gated on **both** ends:
@@ -99,7 +97,6 @@ Every turn is gated on **both** ends:
 
 ## 🛡️ Guardrails in Action
 
-<!-- TODO: swap for a real screenshot/example from a run -->
 
 | User asks | System does |
 |---|---|
@@ -114,19 +111,16 @@ Every turn is gated on **both** ends:
 
 Every report run and chatbot turn is traced in **LangSmith**, tagged by ticker and guardrail outcome.
 
-<!-- TODO: drop 2–3 LangSmith screenshots here -->
-| | |
-|---|---|
-| ![Parallel agent spans](assets/langsmith-workflow.png) | ![Validate→retry firing](assets/langsmith-retry.png) |
-| *Five specialist branches running in parallel* | *A validator rejecting output and retrying* |
+![Parallel agent spans](assets/langsmith-workflow.png)
+*Five specialist branches running in parallel*
 
 ---
 
-## 📊 Evaluation (RAGAS)
+<!-- ## 📊 Evaluation (RAGAS)
 
 Chatbot answers scored over a 10–15 question golden set (`data/golden_set.json`), judged by Gemini, logged to LangSmith.
 
-<!-- TODO: fill with real numbers from `python -m eval.ragas_eval` -->
+
 | Metric | Score |
 |---|---|
 | Faithfulness | `— run to fill` |
@@ -136,7 +130,7 @@ Chatbot answers scored over a 10–15 question golden set (`data/golden_set.json
 python -m eval.ragas_eval data/golden_set.json
 ```
 
----
+--- -->
 
 ## 🛠️ Tech Stack
 
@@ -146,7 +140,7 @@ python -m eval.ragas_eval data/golden_set.json
 | **LLM (agents)** | Groq `llama-3.3-70b-versatile`, Gemini fallback with per-call backoff |
 | **LLM (guard judge)** | Groq `llama-3.1-8b-instant` |
 | **Vector store** | Pinecone serverless — namespace per ticker, `source_type` tags |
-| **Embeddings** | Pinecone-hosted `llama-text-embed-v2` |
+| **Embeddings** | NVIDIA NIM `nvidia/nv-embed-v1` (requires `NVIDIA_API_KEY`) |
 | **Reranking** | Cohere Rerank |
 | **Guardrails** | GuardrailsAI + Presidio (PII) + custom groundedness validator |
 | **Tools / MCP** | yfinance, newsdata.io, Alpha Vantage (remote MCP), pdfplumber, plotly |
@@ -168,7 +162,7 @@ pip install -r requirements.txt
 cp .env.example .env        # then fill in your keys
 ```
 
-Keys needed (all have free tiers): **Pinecone, Cohere, Groq, Gemini, newsdata.io, Alpha Vantage, LangSmith** — see `.env.example` for the exact variable names.
+Keys needed (all have free tiers): **Pinecone, Cohere, Groq, Gemini, newsdata.io, Alpha Vantage, NVIDIA, LangSmith** — see `.env.example` for the exact variable names.
 
 ```bash
 # Generate a report headless (also indexes the ticker's namespace):
