@@ -17,7 +17,16 @@ def load_config() -> dict:
         "NEWSDATA_API_KEY": os.getenv("NEWSDATA_API_KEY"),
         "COHERE_API_KEY": os.getenv("COHERE_API_KEY"),
         "GROQ_API_KEY": os.getenv("GROQ_API_KEY"),
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+        "ALPHAVANTAGE_API_KEY": os.getenv("ALPHAVANTAGE_API_KEY")
+        or os.getenv("ALPHA_VANTAGE_API"),
+        "HUGGINGFACEHUB_API_TOKEN": os.getenv("HUGGINGFACEHUB_API_TOKEN"),
     }
+
+
+def get_cache() -> Cache:
+    """Shared diskcache instance, for callers needing manual get/set."""
+    return _cache
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -29,6 +38,9 @@ def get_logger(name: str) -> logging.Logger:
         )
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
+        # Third-party libs (guardrails et al.) attach root handlers; without
+        # this every record prints twice in the CLI.
+        logger.propagate = False
     return logger
 
 

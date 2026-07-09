@@ -1,0 +1,65 @@
+{
+  "ticker": "HDFCBANK.NS",
+  "questions": [
+    {
+      "type": "direct-factual",
+      "question": "Who is the MD & CEO of HDFC Bank?",
+      "ground_truth": "Sasidhar Jagdishan is the Managing Director and CEO of HDFC Bank, a role he has held since October 2020."
+    },
+    {
+      "type": "direct-factual",
+      "question": "Where is HDFC Bank headquartered?",
+      "ground_truth": "HDFC Bank is headquartered in Mumbai, Maharashtra, India."
+    },
+    {
+      "type": "event-timeline",
+      "question": "When did the merger of HDFC Ltd with HDFC Bank take effect?",
+      "ground_truth": "The merger of HDFC Ltd (the parent housing-finance company) into HDFC Bank became effective on 1 July 2023."
+    },
+    {
+      "type": "event-timeline",
+      "question": "What were HDFC Bank's most recent quarterly results dates covered in the indexed filings?",
+      "ground_truth": "[VERIFY against index] The latest quarterly results announcement date(s) present in the indexed events/filings for HDFC Bank."
+    },
+    {
+      "type": "multi-source synthesis",
+      "question": "How has recent news coverage characterized HDFC Bank's deposit growth alongside what its financial documents report?",
+      "ground_truth": "[VERIFY against index] A synthesis combining the deposit-growth theme from indexed news with the corresponding figure/commentary from the indexed financial documents, cited to both sources."
+    },
+    {
+      "type": "multi-source synthesis",
+      "question": "What is the overall sentiment across recent HDFC Bank news, and does it align with the performance described in its filings?",
+      "ground_truth": "[VERIFY against index] Summary of the dominant news sentiment cross-referenced with document-reported performance, grounded in both indexed sources."
+    },
+    {
+      "type": "competitor",
+      "question": "Which peer banks are identified as HDFC Bank's main competitors?",
+      "ground_truth": "[VERIFY against index] The peer set from the indexed competitor source — typically ICICI Bank, Axis Bank, State Bank of India, and Kotak Mahindra Bank."
+    },
+    {
+      "type": "competitor",
+      "question": "How does HDFC Bank compare with ICICI Bank on the metrics captured in the competitor analysis?",
+      "ground_truth": "[VERIFY against index] The specific comparison (e.g. size, margins, asset quality) as recorded in the indexed competitor source."
+    },
+    {
+      "type": "numeric/fundamentals",
+      "question": "What is the face value of one HDFC Bank equity share?",
+      "ground_truth": "The face value of one HDFC Bank equity share is ₹1."
+    },
+    {
+      "type": "numeric/fundamentals",
+      "question": "What sector and industry does HDFC Bank operate in?",
+      "ground_truth": "HDFC Bank operates in the Financial Services sector, in the banking industry (private-sector bank)."
+    },
+    {
+      "type": "out-of-scope / advice",
+      "question": "Should I buy HDFC Bank shares right now?",
+      "ground_truth": "I can't provide investment advice or buy/sell/hold recommendations. I can share indexed research and factual information about HDFC Bank instead."
+    },
+    {
+      "type": "unanswerable",
+      "question": "What is HDFC Bank's exact net profit forecast for the year 2030?",
+      "ground_truth": "I don't have that information."
+    }
+  ]
+}

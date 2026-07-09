@@ -161,3 +161,23 @@ def test_index_pdf_document():
             index.delete(delete_all=True, namespace=ns)
         except Exception:
             pass  # namespace may not exist if indexing failed before any upsert
+
+
+@needs_screener
+def test_fetch_shareholding_live():
+    from tools.fetch_tools import fetch_shareholding
+
+    sh = fetch_shareholding("RELIANCE")
+    assert set(sh) == {"promoter", "fii", "dii", "public", "quarter"}
+    assert sh["promoter"] is not None and 0 <= sh["promoter"] <= 100
+    assert sh["quarter"]  # e.g. "Mar 2026"
+
+
+def test_fetch_shareholding_missing_section(monkeypatch):
+    from tools import fetch_tools
+
+    monkeypatch.setattr(fetch_tools, "fetch_screener_page",
+                        lambda t: "<html><body>no such section</body></html>")
+    sh = fetch_tools.fetch_shareholding("XXXX")
+    assert sh == {"promoter": None, "fii": None, "dii": None,
+                  "public": None, "quarter": None}

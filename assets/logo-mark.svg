@@ -1,0 +1,8 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Multi-Agent Equity Analyst mark">
+  <g stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M20 16 L10 32 L20 48"/>
+    <path d="M44 16 L54 32 L44 48"/>
+    <polyline points="24,38 30,32 34,36 40,24" stroke-width="2.8"/>
+  </g>
+  <circle cx="40" cy="24" r="3.4" fill="#c99a3f"/>
+</svg>

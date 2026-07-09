@@ -1,13 +1,13 @@
 import re
 from datetime import datetime, timedelta
-from io import BytesIO
 from typing import List, Optional
 
-import pdfplumber
+import fitz  # PyMuPDF
 import requests
 from bs4 import BeautifulSoup
 
 from utils.helpers import disk_cache, get_logger, load_config
+from utils.tracing import traceable
 
 logger = get_logger(__name__)
 
@@ -33,6 +33,7 @@ _ARTICLE_FIELDS = (
 
 
 @disk_cache(ttl_hours=6)
+@traceable(name="fetch_news_articles")
 def fetch_news_articles(ticker: str, company_name: str, hours: int = 48) -> List[dict]:
     """Fetch recent news for company_name from newsdata.io (/api/1/latest).
 
@@ -84,6 +85,7 @@ def resolve_screener_slug(ticker: str) -> str:
 
 
 @disk_cache(ttl_hours=24)
+@traceable(name="fetch_screener_page")
 def fetch_screener_page(ticker: str) -> str:
     """Raw HTML of the screener.in company page (consolidated view, standalone fallback)."""
     slug = resolve_screener_slug(ticker)
@@ -190,23 +192,30 @@ def fetch_annual_report_url(ticker: str) -> str:
     return link["href"]
 
 
+@traceable(
+    name="parse_pdf_to_text",
+    process_outputs=lambda out: {"chars": len(out or "")},
+)
 def parse_pdf_to_text(url: str) -> str:
-    """Download a PDF and extract text with pdfplumber, pages joined by newlines.
+    """Download a PDF and extract text with PyMuPDF, pages joined by newlines.
 
-    No OCR — assumes digitally-generated PDFs. Table column alignment is
-    best-effort; dense financial tables may not be perfectly preserved.
+    PyMuPDF (fitz) is ~20-30x faster than pdfplumber on large (200-400pg)
+    annual reports, which dominated the docs branch latency. No OCR — assumes
+    digitally-generated PDFs; layout/column order is not preserved, which is
+    fine since the text is chunked and embedded for semantic search.
     """
     resp = requests.get(url, headers=_HEADERS, timeout=60)
     resp.raise_for_status()
     pages = []
-    with pdfplumber.open(BytesIO(resp.content)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
+    with fitz.open(stream=resp.content, filetype="pdf") as doc:
+        for page in doc:
+            text = page.get_text()
             if text:
                 pages.append(text)
     return "\n".join(pages)
 
 
+@traceable(name="index_pdf_document")
 def index_pdf_document(url: str, ticker: str, source_type: str, meta: Optional[dict] = None) -> None:
     """Parse a PDF and store its text into Pinecone namespace=ticker in one call."""
     from tools.pinecone_tools import store_to_pinecone
@@ -216,3 +225,40 @@ def index_pdf_document(url: str, ticker: str, source_type: str, meta: Optional[d
         logger.warning("No text extracted from %s; skipping indexing", url)
         return
     store_to_pinecone(ticker, [text], source_type, meta)
+
+
+def fetch_shareholding(ticker: str) -> dict:
+    """Latest-quarter shareholding pattern from screener.in's Shareholding section.
+
+    Screener renders a quarterly table (section id='shareholding'): rows are
+    'Promoters +', 'FIIs +', 'DIIs +', 'Public +'; the last column is the most
+    recent quarter. Returns percentages as floats, None for anything missing.
+    """
+    empty = {"promoter": None, "fii": None, "dii": None, "public": None, "quarter": None}
+    soup = BeautifulSoup(fetch_screener_page(ticker), "lxml")
+    section = soup.find(id="shareholding")
+    if section is None:
+        return empty
+    table = section.find("table")
+    if table is None:
+        return empty
+    out = dict(empty)
+    headers = [th.get_text(strip=True) for th in table.select("thead th")]
+    if len(headers) > 1:
+        out["quarter"] = headers[-1]
+    row_map = (("promoter", "promoter"), ("fii", "fii"), ("dii", "dii"), ("public", "public"))
+    for row in table.select("tbody tr"):
+        cells = row.find_all("td")
+        if len(cells) < 2:
+            continue
+        label = cells[0].get_text(strip=True).lower()
+        raw = cells[-1].get_text(strip=True).replace("%", "").replace(",", "")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        for prefix, key in row_map:
+            if label.startswith(prefix) and out[key] is None:
+                out[key] = value
+                break
+    return out
