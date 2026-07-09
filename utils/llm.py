@@ -56,10 +56,17 @@ def _is_timeout(exc: Exception) -> bool:
             or "timeout" in type(exc).__name__.lower())
 
 
+def _is_tool_use_failed(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return ("tool use" in text and "failed" in text) or \
+           ("tool calling" in text and "error" in text) or \
+           ("tool use" in text and "error" in text)
+
+
 class _BackoffLLM:
     """Per-call Groq ladder (70b -> 8b) + Gemini fallback. No shared state.
-    Any exception on a tier fails over to the next; the last exception is
-    raised only if Gemini also fails."""
+    Retries on rate limit or tool use failed, switching models on rate limit.
+    Max 5 attempts across all models."""
 
     def __init__(self, schema: Optional[Type[BaseModel]] = None):
         self._schema = schema
@@ -68,16 +75,37 @@ class _BackoffLLM:
         return model.with_structured_output(self._schema) if self._schema else model
 
     def invoke(self, input, **kwargs):
-        for model in GROQ_MODELS:
+        max_attempts = 5
+        attempt = 0
+        last_exception = None
+        # We'll create a list of models to try: first the two Groq models, then Gemini.
+        models = [
+            ('groq', GROQ_MODELS[0]),   # 70b
+            ('groq', GROQ_MODELS[1]),   # 8b
+            ('gemini', GEMINI_MODEL)
+        ]
+        model_index = 0
+        while attempt < max_attempts and model_index < len(models):
+            provider, model_name = models[model_index]
             try:
-                return self._bind(_groq(model)).invoke(input, **kwargs)
+                if provider == 'groq':
+                    return self._bind(_groq(model_name)).invoke(input, **kwargs)
+                else:  # gemini
+                    return self._bind(_gemini()).invoke(input, **kwargs)
             except Exception as e:
-                reason = ("rate limit" if _is_rate_limit(e)
-                          else "timeout" if _is_timeout(e) else "error")
-                logger.warning("Groq %s failed (%s: %s); trying next tier",
-                               model, reason, e)
-        logger.warning("All Groq tiers failed; falling back to Gemini")
-        return self._bind(_gemini()).invoke(input, **kwargs)
+                last_exception = e
+                if _is_rate_limit(e):
+                    # Switch to next model
+                    model_index += 1
+                    attempt += 1
+                elif _is_tool_use_failed(e):
+                    # Retry the same model
+                    attempt += 1
+                else:
+                    # Non-recoverable error, break out
+                    break
+        # If we get here, we've exhausted attempts or had a non-recoverable error
+        raise last_exception
 
 
 def get_llm(structured_schema: Optional[Type[BaseModel]] = None):

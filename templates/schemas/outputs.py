@@ -45,7 +45,6 @@ class CompetitorOutput(BaseModel):
     """Competitor Intelligence agent result."""
 
     peers: list[PeerComparison] = Field(
-        min_length=3, max_length=5,
         description="3-5 true competitors, best match first")
     comparison_summary: str = Field(
         description="Competitive-landscape narrative: where the target leads, lags, and why. Cites metrics from the peer table",
@@ -136,7 +135,6 @@ class EventOutput(BaseModel):
     events: list[TimelineEvent] = Field(
         description="Chronological (oldest first) timeline from ~90 days of announcements. Empty allowed if no announcements found")
     highlights: list[str] = Field(
-        max_length=3,
         description="Top up-to-3 most significant events, one line each",
         examples=[["Rs 22/share final dividend declared (14 May)",
                    "CFO resignation announced (02 Jun)"]])
@@ -158,7 +156,6 @@ class GuidanceItem(BaseModel):
         description="document type + date",
         examples=["Q4 FY26 concall, 2026-04-19"])
     quote: str = Field(
-        min_length=20,
         description="Exact supporting quote from the document",
         examples=["We remain confident of delivering credit growth in the range of 17 to 18 percent for the full year"])
 

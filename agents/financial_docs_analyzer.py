@@ -59,7 +59,7 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
             logger.warning("docs: vectors not visible after store; queries may be empty")
         for q in QUERIES:
             try:
-                contexts[q] = [hit["text"] for hit in query_pinecone(ticker, q, "docs", k=5)]
+                contexts[q] = [hit["text"] for hit in query_pinecone(ticker, q, "docs", k=3)]
             except Exception:
                 logger.exception("docs: query failed for %r", q)
                 contexts[q] = []
