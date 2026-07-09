@@ -11,91 +11,40 @@ from utils.tracing import traceable
 
 logger = get_logger(__name__)
 
+# ==== Embedding configuration (NVIDIA NIM) ====
 INDEX_NAME = "stock-research"
-INDEX_NAME = "stock-research-gemini-3072"
-EMBED_DIM = 3072
-GEMINI_MODEL = "gemini-embedding-2-preview"
-GEMINI_BATCH_SIZE = 100
+EMBED_DIM = 4096  # NV-Embed-v1 outputs 4096-dim vectors
+NVIDIA_MODEL = "nvidia/nv-embed-v1"
+
+# Chunk size in characters (~6k-8k tokens assuming ~4 chars/token)
+# Using 24000 chars ≈ 6000 tokens, safe for most LLMs.
+CHUNK_SIZE = 4000
+CHUNK_OVERLAP = 500  # ~50 tokens overlap
 
 
 def _split_keys(raw: Optional[str]) -> List[str]:
     if not raw:
         return []
-    return [part.strip() for part in re.split(r"[\n,;]+", raw) if part.strip()]
+    return [part.strip() for part in re.split(r"[\\n,;]+", raw) if part.strip()]
 
 
-def _google_api_keys() -> List[str]:
-    keys: List[str] = []
+def _get_nvidia_api_key() -> str:
+    """Fetch NVIDIA API key from environment or config."""
     cfg = load_config()
-    keys.extend(_split_keys(cfg.get("GOOGLE_API_KEY")))
-    keys.extend(_split_keys(os.getenv("GOOGLE_API_KEYS")))
-    keys.extend(_split_keys(os.getenv("GEMINI_API_KEY")))
-    for suffix in ("1", "2", "3"):
-        keys.extend(_split_keys(os.getenv(f"GOOGLE_API_KEY_{suffix}")))
-        keys.extend(_split_keys(os.getenv(f"GEMINI_API_KEY_{suffix}")))
-    deduped: List[str] = []
-    seen = set()
-    for key in keys:
-        if key not in seen:
-            seen.add(key)
-            deduped.append(key)
-    return deduped
-
-
-@lru_cache(maxsize=None)
-def _gemini_client(api_key: str):
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-    return GoogleGenerativeAIEmbeddings(
-        model=GEMINI_MODEL,
-        api_key=api_key,
-        output_dimensionality=EMBED_DIM,
+    key = (
+        cfg.get("NVIDIA_API_KEY")
+        or os.getenv("NVIDIA_API_KEY")
     )
-
-
-def namespace_of(ticker: str) -> str:
-    """HDFCBANK.NS -> HDFCBANK. Strips exchange suffix, keeps alnum, uppercases.
-
-    Pinecone namespaces are per-company (spec: one namespace per ticker, e.g.
-    "HDFCBANK"), but callers hold the exchange-suffixed symbol (e.g.
-    "HDFCBANK.NS") because that's what yfinance needs for market data. Every
-    public function below normalizes through this so callers never have to."""
-    base = re.sub(r"\.(NS|BO)$", "", ticker.strip(), flags=re.IGNORECASE)
-    return re.sub(r"[^A-Za-z0-9]", "", base).upper()
-
-_pc: Optional[Pinecone] = None
-_index = None
-
-
-def _get_client() -> Pinecone:
-    global _pc
-    if _pc is None:
-        _pc = Pinecone(api_key=load_config()["PINECONE_API_KEY"])
-    return _pc
-
-
-def get_index():
-    """Lazy singleton for the shared 'stock-research' serverless index (creates it if missing)."""
-    global _index
-    if _index is None:
-        pc = _get_client()
-        if not pc.has_index(INDEX_NAME):
-            pc.create_index(
-                name=INDEX_NAME,
-                dimension=EMBED_DIM,
-                metric="cosine",
-                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-            )
-            while not pc.describe_index(INDEX_NAME).status["ready"]:
-                time.sleep(1)
-        _index = pc.Index(INDEX_NAME)
-    return _index
+    # Basic validation: key should be a non-empty string.
+    if not key or not isinstance(key, str):
+        raise RuntimeError("NVIDIA API key not found. Set NVIDIA_API_KEY in .env or config.")
+    return key.strip()
 
 
 class Embedder(ABC):
-    chunk_size: int
-    chunk_overlap: int
-    
+    chunk_size: int = CHUNK_SIZE
+    chunk_overlap: int = CHUNK_OVERLAP
+
     def chunk_text(self, text: str) -> List[str]:
         if len(text) <= self.chunk_size:
             return [text] if text.strip() else []
@@ -112,105 +61,89 @@ class Embedder(ABC):
     def embed(self, texts: List[str], input_type: str = "passage") -> List[List[float]]:
         pass
 
-class GeminiEmbedder(Embedder):
-    chunk_size = 24000
-    chunk_overlap = 2000
 
+class NVIDIAEmbedder(Embedder):
     def __init__(self, api_key: str):
         self.api_key = api_key
-    
-    def embed(self, texts: List[str], input_type: str = "passage") -> List[List[float]]:
-        client = _gemini_client(self.api_key)
-        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
-        if len(texts) == 1:
-            return [client.embed_query(
-                texts[0],
-                task_type=task_type,
-                output_dimensionality=EMBED_DIM,
-            )]
-        return client.embed_documents(
-            texts,
-            batch_size=GEMINI_BATCH_SIZE,
-            task_type=task_type,
-            output_dimensionality=EMBED_DIM,
+        # Lazy import to avoid hard dependency if not used
+        from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+
+        self._client = NVIDIAEmbeddings(
+            model=NVIDIA_MODEL,
+            api_key=api_key,
+            truncate="NONE",
         )
 
-class _GeminiRouter:
-    def __init__(self, api_keys: List[str]):
-        if not api_keys:
-            raise RuntimeError("No Google/Gemini embedding API keys configured.")
-        self._api_keys = api_keys
-        self._cursor = 0
-        self._lock = Lock()
-
-    def reset(self) -> None:
-        with self._lock:
-            self._cursor = 0
-
-    def size(self) -> int:
-        return len(self._api_keys)
-
-    def next_key(self) -> str:
-        with self._lock:
-            key = self._api_keys[self._cursor]
-            self._cursor = (self._cursor + 1) % len(self._api_keys)
-            return key
-
-    def select(self) -> GeminiEmbedder:
-        return GeminiEmbedder(self.next_key())
+    def embed(self, texts: List[str], input_type: str = "passage") -> List[List[float]]:
+        """
+        Embed a list of strings.
+        For a single query (len(texts)==1 and input_type=='query') we use embed_query,
+        otherwise we use embed_documents (batched internally by the NVIDIA client).
+        """
+        if len(texts) == 1 and input_type == "query":
+            return [self._client.embed_query(texts[0])]
+        # For passages or multiple texts, use embed_documents.
+        # The NVIDIA endpoint handles batching; we can optionally chunk here if needed.
+        return self._client.embed_documents(texts)
 
 
-_router: Optional[_GeminiRouter] = None
-
-
-def _get_router() -> _GeminiRouter:
-    global _router
-    if _router is None:
-        _router = _GeminiRouter(_google_api_keys())
-    return _router
-
-
-def reset_embed_floor():
-    if _router is not None:
-        _router.reset()
+# ----- Singleton embedder (lazy, cached) -----
+@lru_cache(maxsize=None)
+def _get_embedder() -> NVIDIAEmbedder:
+    return NVIDIAEmbedder(_get_nvidia_api_key())
 
 
 def get_current_embedder() -> Embedder:
-    return _get_router().select()
+    return _get_embedder()
 
 
 def select_embedder() -> Embedder:
+    """Compatibility alias used elsewhere."""
     return get_current_embedder()
 
 
-def advance_embedder_tier():
-    if _router is not None:
-        _router.next_key()
-
-def is_quota_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return ("429" in text or "resource_exhausted" in text
-            or "quota" in text or "rate limit" in text
-            or "rate_limit" in text or "token limit" in text)
+def reset_embed_floor() -> None:
+    """Reset the cached embedder (no-op for singleton, but kept for compatibility)."""
+    _get_embedder.cache_clear()
 
 
-def _embed_with_round_robin(texts: List[str], input_type: str) -> List[List[float]]:
-    last_error: Optional[Exception] = None
-    router = _get_router()
-    for _ in range(router.size()):
-        embedder = router.select()
-        try:
-            return embedder.embed(texts, input_type)
-        except Exception as exc:
-            if not is_quota_error(exc):
-                raise
-            last_error = exc
-            logger.warning("Gemini key %s quota exhausted; trying next", embedder.api_key)
-    if last_error is not None:
-        raise last_error
-    return []
+# ==== Pinecone utilities (unchanged) ====
+def namespace_of(ticker: str) -> str:
+    """HDFCBANK.NS -> HDFCBANK. Strips exchange suffix, keeps alphanum, uppercases."""
+    base = re.sub(r"\\.(NS|BO)$", "", ticker.strip(), flags=re.IGNORECASE)
+    return re.sub(r"[^A-Za-z0-9]", "", base).upper()
 
 
+_pc: Optional[Pinecone] = None
+_index = None
+
+
+def _get_client() -> Pinecone:
+    global _pc
+    if _pc is None:
+        _pc = Pinecone(api_key=load_config()["PINECONE_API_KEY"])
+    return _pc
+
+
+def get_index():
+    """Lazy singleton for the shared 'stock-research' serverless index (creates if missing)."""
+    global _index
+    if _index is None:
+        pc = _get_client()
+        if not pc.has_index(INDEX_NAME):
+            pc.create_index(
+                name=INDEX_NAME,
+                dimension=EMBED_DIM,
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
+            while not pc.describe_index(INDEX_NAME).status["ready"]:
+                time.sleep(1)
+        _index = pc.Index(INDEX_NAME)
+    return _index
+
+
+# ==== Core embedding function ====
 @traceable(
     name="embed_texts",
     process_inputs=lambda inp: {"n_texts": len(inp.get("texts") or []),
@@ -218,10 +151,15 @@ def _embed_with_round_robin(texts: List[str], input_type: str) -> List[List[floa
     process_outputs=lambda out: {"n_vectors": len(out or [])},
 )
 def embed_texts(texts: List[str], input_type: str = "passage") -> List[List[float]]:
-    """Embed via Gemini key rotation. input_type: 'passage' for docs, 'query' for queries."""
-    return _embed_with_round_robin(texts, input_type)
+    """
+    Embed texts via the configured NVIDIA NIM model.
+    input_type: 'passage' for documents, 'query' for queries.
+    """
+    embedder = get_current_embedder()
+    return embedder.embed(texts, input_type=input_type)
 
 
+# ==== Remaining Pinecone helpers (unchanged) ====
 def check_index(ticker: str, source_type: str) -> bool:
     """True if namespace=ticker holds at least one vector tagged with source_type."""
     ticker = namespace_of(ticker)
@@ -230,7 +168,6 @@ def check_index(ticker: str, source_type: str) -> bool:
     ns = stats.namespaces or {}
     if ticker not in ns or ns[ticker].vector_count == 0:
         return False
-    # Namespace exists; confirm at least one vector matches source_type via a filtered query.
     res = index.query(
         namespace=ticker,
         vector=[0.0] * (EMBED_DIM - 1) + [1.0],
@@ -242,9 +179,11 @@ def check_index(ticker: str, source_type: str) -> bool:
 
 @traceable(
     name="store_to_pinecone",
-    process_inputs=lambda inp: {"ticker": inp.get("ticker"),
-                                "n_docs": len(inp.get("docs") or []),
-                                "source_type": inp.get("source_type")},
+    process_inputs=lambda inp: {
+        "ticker": inp.get("ticker"),
+        "n_docs": len(inp.get("docs") or []),
+        "source_type": inp.get("source_type"),
+    },
 )
 def store_to_pinecone(
     ticker: str, docs: List[str], source_type: str, meta: Optional[dict] = None
@@ -254,14 +193,15 @@ def store_to_pinecone(
     index = get_index()
     doc_key = (meta or {}).get("document_id", f"{source_type}-{int(time.time())}")
 
-    chunker = GeminiEmbedder(api_key="")
+    # Use a dummy key just for chunking (chunk_text does not need the API key)
+    chunker = NVIDIAEmbedder(api_key="")
     chunks: List[str] = []
     for doc in docs:
         chunks.extend(chunker.chunk_text(doc))
     if not chunks:
         return
 
-    embeddings = _embed_with_round_robin(chunks, input_type="passage")
+    embeddings = embed_texts(chunks, input_type="passage")
     vectors = []
     for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
         metadata = {
@@ -272,10 +212,18 @@ def store_to_pinecone(
         }
         if meta:
             metadata.update(meta)
-        vectors.append({"id": f"{ticker}-{doc_key}-{i}", "values": emb, "metadata": metadata})
+        vectors.append(
+            {"id": f"{ticker}-{doc_key}-{i}", "values": emb, "metadata": metadata}
+        )
     for start in range(0, len(vectors), 100):
-        index.upsert(vectors=vectors[start : start + 100], namespace=ticker, show_progress=False)
-    logger.info("Upserted %d vectors to %s/%s (%s)", len(vectors), INDEX_NAME, ticker, source_type)
+        index.upsert(
+            vectors=vectors[start : start + 100],
+            namespace=ticker,
+            show_progress=False,
+        )
+    logger.info(
+        "Upserted %d vectors to %s/%s (%s)", len(vectors), INDEX_NAME, ticker, source_type
+    )
 
 
 @traceable(name="query_pinecone")
@@ -313,7 +261,7 @@ def namespace_exists(ticker: str) -> bool:
 
 def _doc_id_from_vid(vid: str, ticker: str) -> str:
     """Fallback: parse '{ticker}-{doc_key}-{i}' -> doc_key when metadata lacks document_id."""
-    core = vid[len(ticker) + 1:] if vid.startswith(ticker + "-") else vid
+    core = vid[len(ticker) + 1 :] if vid.startswith(ticker + "-") else vid
     return core.rsplit("-", 1)[0] if "-" in core else core
 
 
@@ -338,7 +286,8 @@ def list_documents(ticker: str) -> dict:
             entry = bucket.setdefault(
                 doc_id,
                 {"document_id": doc_id, "date": md.get("date"),
-                 "source_type": st, "chunk_count": 0})
+                 "source_type": st, "chunk_count": 0},
+            )
             entry["chunk_count"] += 1
             if entry["date"] is None and md.get("date"):
                 entry["date"] = md["date"]
@@ -359,8 +308,7 @@ def delete_namespace(ticker: str) -> None:
 
 @traceable(name="wait_for_vectors")
 def wait_for_vectors(ticker: str, timeout_s: int = 20) -> bool:
-    """Poll until namespace=ticker is visible (serverless is eventually
-    consistent between upsert and query). True once visible, False on timeout."""
+    """Poll until namespace=ticker is visible (serverless is eventually consistent)."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if namespace_exists(ticker):

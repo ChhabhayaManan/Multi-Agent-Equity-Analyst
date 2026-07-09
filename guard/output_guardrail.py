@@ -10,7 +10,7 @@ from utils.helpers import get_logger
 logger = get_logger(__name__)
 
 # A response sentence is grounded if its cosine similarity to at least one
-# retrieved chunk clears this threshold (llama-text-embed-v2 embeddings).
+# retrieved chunk clears this threshold (nvidia/nv-embed-v1 embeddings).
 GROUNDEDNESS_THRESHOLD = 0.6
 
 # Embeddings can't match short numeric prose ("price is 3595.0 INR") to terse
