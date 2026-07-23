@@ -1,4 +1,9 @@
 """Chatbot: pick a researched ticker -> chat (status + inline charts) + doc list."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 import streamlit as st
 import streamlit.components.v1 as components
 
