@@ -1,7 +1,13 @@
 """Home (index) page. `streamlit run app/main.py`.
 Search an NSE ticker -> generate report (live progress) -> render -> PDF.
 The Chatbot lives in app/pages/1_Chatbot.py."""
+import sys
 from datetime import datetime
+from pathlib import Path
+
+# Streamlit only puts this script's own dir on sys.path, not repo root,
+# so absolute `app.*`/`tools.*`/`workflow.*` imports fail on deploy.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 from streamlit_searchbox import st_searchbox
