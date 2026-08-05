@@ -9,7 +9,6 @@ from workflow.edges import make_router
 from workflow.nodes import make_run_node, make_validate_node, prepare, synthesis
 from workflow.state import AGENTS, GraphState
 
-
 def build_graph():
     builder = StateGraph(GraphState)
     builder.add_node("prepare", prepare)
@@ -26,7 +25,6 @@ def build_graph():
     builder.add_edge("synthesis", END)
     return builder.compile()
 
-
 def _run_config(ticker: str) -> dict:
     return {"tags": [ticker],
             "metadata": {"run_type": "report", "ticker": ticker}}
@@ -42,10 +40,12 @@ def generate_report(ticker: str, company_name: str) -> dict:
 def stream_report(ticker: str, company_name: str) -> Iterator[dict]:
     """Streaming entry point for the frontend. Runs the graph with
     stream_mode='updates' and yields one dict per node update:
-    {node, runs, report, done}. `runs` accumulates across yields; the final
-    yield sets done=True and carries the completed report."""
+    {node, runs, specialists, report, done}. `runs` and `specialists`
+    accumulate across yields; the final yield sets done=True and carries the
+    completed report plus every specialist output the run produced."""
     graph = build_graph()
     runs: dict = {}
+    specialists: dict = {name: None for name in AGENTS}
     report = None
     last_node = None
     for update in graph.stream(
@@ -55,10 +55,16 @@ def stream_report(ticker: str, company_name: str) -> Iterator[dict]:
             last_node = node
             if partial and partial.get("runs"):
                 runs = {**runs, **partial["runs"]}
+            if partial:
+                for name in AGENTS:
+                    if partial.get(name) is not None:
+                        specialists[name] = partial[name]
             if partial and partial.get("report") is not None:
                 report = partial["report"]
-            yield {"node": node, "runs": runs, "report": report, "done": False}
-    yield {"node": last_node, "runs": runs, "report": report, "done": True}
+            yield {"node": node, "runs": runs, "specialists": dict(specialists),
+                   "report": report, "done": False}
+    yield {"node": last_node, "runs": runs, "specialists": dict(specialists),
+           "report": report, "done": True}
 
 
 if __name__ == "__main__":

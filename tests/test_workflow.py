@@ -161,10 +161,11 @@ def test_synthesis_raises_once_then_succeeds(gr, monkeypatch):
     assert state["report"].exec_summary == "e"        # report produced on retry
 
 
-def test_stream_report_yields_updates_and_final_report(monkeypatch):
-    import types as _types
+def test_stream_report_yields_updates_runs_and_specialists(monkeypatch):
+    fund = GOOD["fundamentals"][0]
     updates = [
-        {"run_fundamentals": {"runs": {"fundamentals": {"status": "passed"}}}},
+        {"run_fundamentals": {"runs": {"fundamentals": {"status": "passed"}},
+                              "fundamentals": fund}},
         {"synthesis": {"runs": {"fundamentals": {"status": "passed"}},
                        "report": REPORT}},
     ]
@@ -187,4 +188,6 @@ def test_stream_report_yields_updates_and_final_report(monkeypatch):
     assert yielded[-1]["done"] is True
     assert yielded[-1]["report"] is REPORT
     assert yielded[-1]["runs"]["fundamentals"]["status"] == "passed"
+    assert yielded[-1]["specialists"]["fundamentals"] is fund
+    assert yielded[-1]["specialists"]["news"] is None       # never emitted
     assert fake.stream_kwargs.get("stream_mode") == "updates"
