@@ -223,15 +223,19 @@ class FundamentalsOutput(BaseModel):
 
 
 class ReportOutput(BaseModel):
-    """Synthesis agent result — the final research report."""
+    """Synthesis agent result — the final research report. Section detail is
+    rendered from the specialist outputs; synthesis writes only the summary."""
 
     exec_summary: str = Field(
-        description="3-5 sentence executive summary across all sections",
+        description=(
+            "Cross-agent executive overview, about two short paragraphs "
+            "(6-9 sentences). Pull the thread between the numbers, the peer "
+            "set, recent news and events, and what management guides: where "
+            "the company stands on valuation versus peers, what the last "
+            "quarter's news and corporate events imply, and what official "
+            "documents say about the direction. Every claim must come from "
+            "the specialist outputs. No trading advice."),
         examples=["HDFC Bank enters FY27 with steady profit growth, a premium valuation versus peers, and management guiding 17-18% credit growth."])
-    sections: dict[str, str] = Field(
-        description="Markdown body per section. Keys exactly: fundamentals, competitors, events, news, docs. Failed sections carry a one-line 'data unavailable' note",
-        examples=[{"fundamentals": "## Company & Fundamentals\n...",
-                   "competitors": "## Competitive Landscape\n..."}])
     sources: list[str] = Field(
         description="Deduplicated source references carried over from specialist outputs",
         examples=[["Q4 FY26 concall, 2026-04-19",

@@ -43,8 +43,7 @@ GOOD = {
         tone_trend="t", narrative="n"), 1),
 }
 
-REPORT = ReportOutput(exec_summary="e", sections={k: "x" for k in GOOD},
-                      sources=[], missing_sections=[])
+REPORT = ReportOutput(exec_summary="e", sources=[], missing_sections=[])
 
 
 @pytest.fixture

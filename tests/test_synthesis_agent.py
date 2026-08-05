@@ -16,9 +16,7 @@ NEWS = NewsOutput(
     narrative="Profit rises set the tone.", overall_sentiment="POSITIVE")
 
 CANNED = ReportOutput(
-    exec_summary="A steady quarter with profit growth.",
-    sections={"fundamentals": "## F", "competitors": "## C", "events": "## E",
-              "news": "## N", "docs": "## D"},
+    exec_summary="A steady quarter with profit growth across the franchise.",
     sources=["llm-invented-source"],       # overwritten in code
     missing_sections=["llm-wrong"])        # overwritten in code
 
@@ -48,6 +46,21 @@ def patched(monkeypatch):
 
     monkeypatch.setattr(mod, "get_llm", lambda schema=None: FakeLLM())
     return mod, captured
+
+
+def test_report_output_has_no_sections_field():
+    assert "sections" not in ReportOutput.model_fields
+
+
+def test_build_index_text_serializes_structured_outputs():
+    from agents.synthesis_agent import build_index_text
+    report = ReportOutput(exec_summary="Exec text.", sources=[],
+                          missing_sections=[])
+    text = build_index_text(_state(), report)
+    assert "Exec text." in text
+    assert "Profit rises" in text            # news item title
+    assert "1712.5" in text                  # fundamentals price passed through
+    assert "MISSING" not in text             # absent agents are simply skipped
 
 
 def test_missing_sections_and_sources_computed_in_code(patched):

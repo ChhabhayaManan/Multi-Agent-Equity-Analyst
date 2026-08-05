@@ -1,6 +1,7 @@
 """Report Synthesis: pure aggregation, one LLM call, no tools.
 missing_sections and sources are computed in code and overwrite whatever
-the LLM returned for those fields."""
+the LLM returned for those fields. build_index_text serializes the whole
+run for the chatbot's retrievable report document."""
 
 import json
 
@@ -11,10 +12,6 @@ from utils.llm import get_llm
 from workflow.state import AGENTS
 
 logger = get_logger(__name__)
-
-# AGENTS name -> report.sections key (only "competitor" differs from its section).
-_SECTION_KEY = {"fundamentals": "fundamentals", "competitor": "competitors",
-                "news": "news", "events": "events", "docs": "docs"}
 
 
 def _is_empty(name: str, obj) -> bool:
@@ -30,7 +27,7 @@ def _is_empty(name: str, obj) -> bool:
         return not obj.events
     if name == "docs":
         return not obj.guidance and not obj.risks
-    return False  # fundamentals: a present object is always usable
+    return False
 
 
 def _collect_sources(state: dict) -> list[str]:
@@ -53,9 +50,6 @@ def _collect_sources(state: dict) -> list[str]:
 
 
 def run(state: dict, retry_feedback: str = "") -> ReportOutput:
-    # "missing" is driven by genuine data-emptiness, NOT validation status: a
-    # section that failed a rule but still has content flows into the report in
-    # full. Only truly-empty sections are blanked.
     missing = [n for n in AGENTS if _is_empty(n, state.get(n))]
     outputs = {
         n: ("MISSING - data unavailable" if _is_empty(n, state.get(n))
@@ -68,14 +62,64 @@ def run(state: dict, retry_feedback: str = "") -> ReportOutput:
         "missing": json.dumps(missing),
         "specialist_outputs": json.dumps(outputs, indent=2, default=str),
         "retry_feedback": retry_feedback}))
-    # Guarantee no section renders blank: any empty body becomes an explicit
-    # absence note (never an empty string), whatever the LLM returned.
-    sections = dict(report.sections)
-    for name in AGENTS:
-        key = _SECTION_KEY[name]
-        if not sections.get(key, "").strip():
-            sections[key] = (f"No {key} data available for "
-                             f"{state['company_name']} ({state['ticker']}).")
     return report.model_copy(update={
-        "sections": sections,
         "missing_sections": missing, "sources": _collect_sources(state)})
+
+
+def build_index_text(state: dict, report: ReportOutput) -> str:
+    """Plain-text serialization of the whole report for the Pinecone
+    'final-report' doc. Deterministic, no LLM: the chatbot retrieves this."""
+    parts = [f"EXECUTIVE SUMMARY\n{report.exec_summary}"]
+
+    f = state.get("fundamentals")
+    if f:
+        parts.append(
+            "FUNDAMENTALS\n"
+            f"{f.summary}\n"
+            f"profile: {json.dumps(f.company_profile, default=str)}\n"
+            f"valuation: {json.dumps(f.valuation, default=str)}\n"
+            f"price: {json.dumps(f.price_snapshot, default=str)}\n"
+            f"shareholding: {json.dumps(f.shareholding, default=str)}")
+
+    c = state.get("competitor")
+    if c:
+        rows = "\n".join(
+            f"- {p.name} ({p.ticker}): intensity {p.competition_intensity}, "
+            f"target {p.target_standing}. {p.reason_for_inclusion} "
+            f"metrics {json.dumps(p.metrics, default=str)}"
+            for p in c.peers)
+        parts.append(f"COMPETITORS (target standing {c.overall_standing})\n"
+                     f"{c.comparison_summary}\n{rows}")
+
+    n = state.get("news")
+    if n:
+        rows = "\n".join(
+            f"- {it.date} {it.title} [{it.sentiment} {it.sentiment_score}] "
+            f"{it.summary} Impact: {it.impact_on_stock} "
+            f"Sector: {it.sector_impact} ({it.source_url})"
+            for it in n.items)
+        parts.append(f"NEWS (overall {n.overall_sentiment})\n{n.narrative}\n{rows}")
+
+    e = state.get("events")
+    if e:
+        rows = "\n".join(
+            f"- {ev.date} [{ev.type}/{ev.significance}] {ev.summary} "
+            f"Meaning: {ev.what_it_meant} Effect: {ev.how_it_affected} "
+            f"1D {ev.price_move_1d} 5D {ev.price_move_5d} "
+            f"ref {ev.filing_ref or '-'}"
+            for ev in e.events)
+        highlights = "\n".join(f"* {h}" for h in e.highlights)
+        parts.append(f"EVENTS\n{highlights}\n{rows}")
+
+    d = state.get("docs")
+    if d:
+        guid = "\n".join(
+            f"- {g.metric}: {g.value} for {g.period} ({g.source}) \"{g.quote}\""
+            for g in d.guidance)
+        risks = "\n".join(f"- {r.risk} ({r.source}) \"{r.quote}\"" for r in d.risks)
+        strat = "\n".join(f"* {s}" for s in d.strategy_highlights)
+        parts.append(
+            f"DOCUMENTS (tone {d.management_tone}; {d.tone_trend})\n"
+            f"{d.narrative}\nGUIDANCE\n{guid}\nRISKS\n{risks}\nSTRATEGY\n{strat}")
+
+    return "\n\n".join(parts)

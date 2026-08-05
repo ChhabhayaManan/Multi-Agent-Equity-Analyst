@@ -60,8 +60,7 @@ def test_event_and_docs_and_fundamentals_and_report():
     FundamentalsOutput(company_profile={"sector": "Banks"},
                        valuation={"pe": 19.2}, price_snapshot={"price": 1712.5},
                        shareholding={"promoter": 0.0}, summary="s" * 60)
-    ReportOutput(exec_summary="e", sections={"fundamentals": "## F"},
-                 sources=["src"], missing_sections=[])
+    ReportOutput(exec_summary="e", sources=["src"], missing_sections=[])
 
 
 def test_quote_min_length():
