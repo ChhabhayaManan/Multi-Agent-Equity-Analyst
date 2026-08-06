@@ -7,11 +7,95 @@ import json
 
 from templates.prompts.synthesis_agent import SYNTHESIS_PROMPT
 from templates.schemas.outputs import ReportOutput
-from utils.helpers import get_logger
+from utils.helpers import get_logger, scrub_nan
 from utils.llm import get_llm
 from workflow.state import AGENTS
 
 logger = get_logger(__name__)
+
+MAX_PAYLOAD_CHARS = 18000
+MAX_TEXT_CHARS = 400
+CAPS = {"peers": 5, "news": 10, "events": 10,
+        "guidance": 8, "risks": 8, "strategy": 6}
+MISSING = "MISSING - data unavailable"
+_SIGNIFICANCE = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+
+
+def _clip(text):
+    if not isinstance(text, str) or len(text) <= MAX_TEXT_CHARS:
+        return text
+    return text[:MAX_TEXT_CHARS].rstrip() + "..."
+
+
+def _top_news(items, cap):
+    """Strongest signal first; sorted() is stable, so ties keep agent order."""
+    return sorted(items, key=lambda it: -abs(it.sentiment_score))[:cap]
+
+
+def _top_events(events, cap):
+    return sorted(events, key=lambda e: _SIGNIFICANCE.get(e.significance, 3))[:cap]
+
+
+def _project(name: str, obj, caps: dict) -> dict:
+    """Only what an exec summary can use. Quotes, source URLs and per-peer
+    metric dicts are dropped - the report renders those from the structured
+    outputs directly, and together they were most of a 17k-token payload."""
+    if name == "fundamentals":
+        return {"summary": _clip(obj.summary),
+                "sector": obj.company_profile.get("sector"),
+                "industry": obj.company_profile.get("industry"),
+                "valuation": obj.valuation,
+                "price": obj.price_snapshot,
+                "shareholding": obj.shareholding}
+    if name == "competitor":
+        return {"standing": obj.overall_standing,
+                "summary": _clip(obj.comparison_summary),
+                "peers": [{"name": p.name, "intensity": p.competition_intensity,
+                           "standing": p.target_standing}
+                          for p in obj.peers[:caps["peers"]]]}
+    if name == "news":
+        return {"sentiment": obj.overall_sentiment,
+                "narrative": _clip(obj.narrative),
+                "items": [{"date": it.date, "title": _clip(it.title),
+                           "sentiment": it.sentiment,
+                           "impact": _clip(it.impact_on_stock)}
+                          for it in _top_news(obj.items, caps["news"])]}
+    if name == "events":
+        return {"highlights": obj.highlights,
+                "events": [{"date": e.date, "type": e.type,
+                            "significance": e.significance,
+                            "summary": _clip(e.summary),
+                            "move_1d": e.price_move_1d}
+                           for e in _top_events(obj.events, caps["events"])]}
+    if name == "docs":
+        return {"tone": obj.management_tone, "tone_trend": _clip(obj.tone_trend),
+                "narrative": _clip(obj.narrative),
+                "strategy": obj.strategy_highlights[:caps["strategy"]],
+                "guidance": [{"metric": g.metric, "value": g.value,
+                              "period": g.period}
+                             for g in obj.guidance[:caps["guidance"]]],
+                "risks": [{"risk": _clip(r.risk)}
+                          for r in obj.risks[:caps["risks"]]]}
+    return {}
+
+
+def _payload(state: dict) -> str:
+    """Serialize the specialists under a char budget. A request larger than
+    the model's per-minute bucket is a hard 413 - the free tier tops out at
+    12k TPM on 70b - so caps halve until it fits."""
+    caps = dict(CAPS)
+    while True:
+        outputs = {n: (MISSING if _is_empty(n, state.get(n))
+                       else _project(n, state[n], caps))
+                   for n in AGENTS}
+        payload = json.dumps(scrub_nan(outputs), default=str, allow_nan=False,
+                             separators=(",", ":"))
+        if len(payload) <= MAX_PAYLOAD_CHARS or min(caps.values()) <= 1:
+            if len(payload) > MAX_PAYLOAD_CHARS:
+                logger.warning("synthesis payload %d chars at minimum caps",
+                               len(payload))
+            return payload
+        caps = {k: max(1, v // 2) for k, v in caps.items()}
 
 
 def _is_empty(name: str, obj) -> bool:
@@ -51,16 +135,11 @@ def _collect_sources(state: dict) -> list[str]:
 
 def run(state: dict, retry_feedback: str = "") -> ReportOutput:
     missing = [n for n in AGENTS if _is_empty(n, state.get(n))]
-    outputs = {
-        n: ("MISSING - data unavailable" if _is_empty(n, state.get(n))
-            else state[n].model_dump())
-        for n in AGENTS
-    }
     llm = get_llm(ReportOutput)
     report = llm.invoke(SYNTHESIS_PROMPT.invoke({
         "ticker": state["ticker"], "company_name": state["company_name"],
         "missing": json.dumps(missing),
-        "specialist_outputs": json.dumps(outputs, indent=2, default=str),
+        "specialist_outputs": _payload(state),
         "retry_feedback": retry_feedback}))
     return report.model_copy(update={
         "missing_sections": missing, "sources": _collect_sources(state)})

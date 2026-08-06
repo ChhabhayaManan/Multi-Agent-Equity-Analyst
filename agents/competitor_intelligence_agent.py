@@ -9,28 +9,34 @@ from templates.prompts.competitor_intelligence_agent import COMPETITOR_SYSTEM
 from templates.schemas.outputs import CompetitorOutput
 from tools import market_tools
 from tools.pinecone_tools import store_to_pinecone
-from utils.helpers import get_logger
+from utils.helpers import get_logger, scrub_nan
 from utils.llm import get_chat_model
 
 logger = get_logger(__name__)
 
 
+def _dump(payload) -> str:
+    """Tool output re-enters the ReAct loop, so NaN here would be echoed back
+    as a tool argument and rejected. allow_nan=False is the tripwire."""
+    return json.dumps(scrub_nan(payload), default=str, allow_nan=False)
+
+
 @tool
 def get_stock_info(ticker: str) -> str:
     """Sector, industry, market cap and description for a ticker (e.g. HDFCBANK.NS)."""
-    return json.dumps(market_tools.get_stock_info(ticker), default=str)
+    return _dump(market_tools.get_stock_info(ticker))
 
 
 @tool
 def search_sector_peers(sector: str, mktcap_low: float, mktcap_high: float) -> str:
     """NSE tickers in `sector` with market cap (INR) between mktcap_low and mktcap_high."""
-    return json.dumps(market_tools.search_sector_peers(sector, (mktcap_low, mktcap_high)))
+    return _dump(market_tools.search_sector_peers(sector, (mktcap_low, mktcap_high)))
 
 
 @tool
 def get_fundamentals(ticker: str) -> str:
     """P/E, P/B, ROE, debt/equity, revenue and dividend yield for a ticker."""
-    return json.dumps(market_tools.get_fundamentals(ticker), default=str)
+    return _dump(market_tools.get_fundamentals(ticker))
 
 
 @tool
@@ -38,17 +44,20 @@ def get_price_returns(ticker: str) -> str:
     """1-month, 3-month and 6-month % price returns for a ticker."""
     df = market_tools.get_price_history(ticker, period="6mo")
     if df.empty or "Close" not in df.columns:
-        return json.dumps({"ret_1m": None, "ret_3m": None, "ret_6m": None})
+        return _dump({"ret_1m": None, "ret_3m": None, "ret_6m": None})
     closes = df["Close"]
 
     def pct(days):
         if len(closes) <= days:
             return None
-        prev = float(closes.iloc[-1 - days])
-        return round((float(closes.iloc[-1]) / prev - 1) * 100, 2) if prev else None
+        prev = scrub_nan(float(closes.iloc[-1 - days]))
+        last = scrub_nan(float(closes.iloc[-1]))
+        if not prev or last is None:
+            return None
+        return round((last / prev - 1) * 100, 2)
 
-    return json.dumps({"ret_1m": pct(21), "ret_3m": pct(63),
-                       "ret_6m": pct(len(closes) - 1)})
+    return _dump({"ret_1m": pct(21), "ret_3m": pct(63),
+                  "ret_6m": pct(len(closes) - 1)})
 
 
 _TOOLS = [get_stock_info, search_sector_peers, get_fundamentals, get_price_returns]

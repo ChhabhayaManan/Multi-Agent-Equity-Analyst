@@ -9,7 +9,7 @@ from templates.schemas.outputs import EventOutput
 from tools.fetch_tools import fetch_bse_announcements
 from tools.market_tools import price_move_around
 from tools.pinecone_tools import store_to_pinecone
-from utils.helpers import get_logger
+from utils.helpers import get_logger, scrub_nan
 from utils.llm import get_llm
 
 logger = get_logger(__name__)
@@ -22,7 +22,8 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
     moves_by_date: dict[str, dict] = {}
     for ann in announcements:
         if ann["date"] not in moves_by_date:
-            moves_by_date[ann["date"]] = price_move_around(ticker, ann["date"])
+            moves_by_date[ann["date"]] = scrub_nan(
+                price_move_around(ticker, ann["date"]))
         ann["price_moves"] = moves_by_date[ann["date"]]
 
     if announcements:
@@ -33,7 +34,8 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
         except Exception:
             logger.exception("events: pinecone store failed (non-fatal)")
 
-    payload = (json.dumps(announcements, indent=2, default=str)
+    payload = (json.dumps(scrub_nan(announcements), indent=2, default=str,
+                          allow_nan=False)
                if announcements else "NO ANNOUNCEMENTS FOUND")
     llm = get_llm(EventOutput)
     out = llm.invoke(EVENTS_PROMPT.invoke({

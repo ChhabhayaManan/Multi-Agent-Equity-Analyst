@@ -1,15 +1,6 @@
-"""LLM factory for all agents.
-
-Fallback ladder per invoke(): Groq llama-3.3-70b -> Groq openai/gpt-oss-120b-> Gemini. Each Groq client carries a 15s request timeout; a rate-limit (429)
-or timeout on one tier fails over immediately to the next (no backoff sleeps —
-the 8b model is a separate rate bucket, and Gemini is the final safety net).
-
-Concurrency: 5 graph branches call this in parallel. There is deliberately
-NO module-level "current provider" state — a flag flipped by one branch's
-429 would race with and silently downgrade the others. Base clients are
-built once and treated as immutable; all retry/fallback state is local to
-each invoke() call.
-"""
+"""LLM factory. Ladder per invoke(): Groq 70b (12k TPM) -> Groq gpt-oss-120b
+(8k TPM) -> Gemini. No module-level provider state: parallel branches must not
+downgrade each other."""
 
 import os
 from functools import lru_cache
@@ -21,8 +12,7 @@ from utils.helpers import get_logger, load_config
 
 logger = get_logger(__name__)
 
-# Tier order: 70b (best quality) first, 8b-instant (fast, separate bucket) next.
-GROQ_MODELS = ("llama-3.3-70b-versatile", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_MODELS = ("llama-3.3-70b-versatile", "openai/gpt-oss-120b")
 GEMINI_MODEL = "gemini-2.5-flash"
 GROQ_TIMEOUT_S = 15
 
@@ -37,11 +27,17 @@ def _groq(model: str = GROQ_MODELS[0]):
 @lru_cache(maxsize=1)
 def _gemini():
     from langchain_google_genai import ChatGoogleGenerativeAI
-    # No explicit google_api_key kwarg: let the client resolve the key itself
-    # from the environment (GOOGLE_API_KEY or GEMINI_API_KEY). Passing
-    # google_api_key=None here would override that dual lookup when only
-    # GEMINI_API_KEY is set, since load_config() has no GEMINI_API_KEY entry.
     return ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+
+
+def _is_too_large(exc: Exception) -> bool:
+    """Prompt exceeds the bucket or context window. Must be tested before
+    _is_rate_limit: Groq sends 413 with body code 'rate_limit_exceeded'."""
+    text = str(exc).lower()
+    return ("request too large" in text or "reduce your message size" in text
+            or "context_length_exceeded" in text
+            or "context length" in text or "too many tokens" in text
+            or getattr(exc, "status_code", None) == 413)
 
 
 def _is_rate_limit(exc: Exception) -> bool:
@@ -58,15 +54,23 @@ def _is_timeout(exc: Exception) -> bool:
 
 def _is_tool_use_failed(exc: Exception) -> bool:
     text = str(exc).lower()
-    return ("tool use" in text and "failed" in text) or \
-           ("tool calling" in text and "error" in text) or \
-           ("tool use" in text and "error" in text)
+    return ("tool_use_failed" in text
+            or ("tool use" in text and "failed" in text)
+            or ("tool calling" in text and "error" in text)
+            or ("tool use" in text and "error" in text))
+
+
+def _is_provider_error(exc: Exception) -> bool:
+    """Provider-side failure, worth another tier. Local errors are not."""
+    return (getattr(exc, "status_code", None) is not None
+            or "error code:" in str(exc).lower()
+            or _is_timeout(exc))
 
 
 class _BackoffLLM:
-    """Per-call Groq ladder (70b -> 8b) + Gemini fallback. No shared state.
-    Retries on rate limit or tool use failed, switching models on rate limit.
-    Max 5 attempts across all models."""
+    """Walks the ladder forward; no tier can end the run before Gemini."""
+
+    _MAX_TRIES_PER_TIER = 2
 
     def __init__(self, schema: Optional[Type[BaseModel]] = None):
         self._schema = schema
@@ -74,42 +78,44 @@ class _BackoffLLM:
     def _bind(self, model):
         return model.with_structured_output(self._schema) if self._schema else model
 
+    def _client(self, provider: str, model_name: str):
+        return _groq(model_name) if provider == "groq" else _gemini()
+
     def invoke(self, input, **kwargs):
-        max_attempts = 5
-        attempt = 0
-        last_exception = None
-        # We'll create a list of models to try: first the two Groq models, then Gemini.
-        models = [
-            ('groq', GROQ_MODELS[0]),   # 70b
-            ('groq', GROQ_MODELS[1]),   # 8b
-            ('gemini', GEMINI_MODEL)
-        ]
-        model_index = 0
-        while attempt < max_attempts and model_index < len(models):
-            provider, model_name = models[model_index]
+        tiers = [("groq", GROQ_MODELS[0]),
+                 ("groq", GROQ_MODELS[1]),
+                 ("gemini", GEMINI_MODEL)]
+        gemini_index = len(tiers) - 1
+
+        index, tries, last_exception = 0, 0, None
+        while index < len(tiers):
+            provider, model_name = tiers[index]
+            tries += 1
             try:
-                if provider == 'groq':
-                    return self._bind(_groq(model_name)).invoke(input, **kwargs)
-                else:  # gemini
-                    return self._bind(_gemini()).invoke(input, **kwargs)
+                return self._bind(self._client(provider, model_name)).invoke(
+                    input, **kwargs)
             except Exception as e:
                 last_exception = e
-                if _is_rate_limit(e):
-                    # Switch to next model
-                    model_index += 1
-                    attempt += 1
-                elif _is_tool_use_failed(e):
-                    # Retry the same model
-                    attempt += 1
-                else:
-                    # Non-recoverable error, break out
-                    break
-        # If we get here, we've exhausted attempts or had a non-recoverable error
+                if _is_too_large(e) and index < gemini_index:
+                    # no smaller Groq bucket can hold it
+                    logger.warning("%s: request too large, escalating to %s",
+                                   model_name, GEMINI_MODEL)
+                    index, tries = gemini_index, 0
+                    continue
+                if _is_tool_use_failed(e) and tries < self._MAX_TRIES_PER_TIER:
+                    logger.warning("%s: tool-call parse failed, retrying once",
+                                   model_name)
+                    continue
+                if not _is_provider_error(e):
+                    raise
+                logger.warning("%s failed (%s), falling through to next tier",
+                               model_name, type(e).__name__)
+                index, tries = index + 1, 0
         raise last_exception
 
 
 def get_llm(structured_schema: Optional[Type[BaseModel]] = None):
-    """LLM for prose/structured agent calls, with backoff + fallback built in."""
+    """LLM for prose/structured agent calls, with fallback built in."""
     if os.getenv("LLM_PROVIDER", "groq").lower() == "gemini":
         model = _gemini()
         return model.with_structured_output(structured_schema) if structured_schema else model
@@ -117,9 +123,7 @@ def get_llm(structured_schema: Optional[Type[BaseModel]] = None):
 
 
 def get_chat_model():
-    """Raw ChatGroq for create_react_agent (needs bind_tools, which the
-    backoff wrapper can't expose). A 429 mid-ReAct surfaces as an agent
-    error and is absorbed by the workflow's validator-retry loop."""
+    """Raw ChatGroq for create_agent, which needs bind_tools."""
     if os.getenv("LLM_PROVIDER", "groq").lower() == "gemini":
         return _gemini()
     return _groq()

@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from templates.schemas.outputs import CompetitorOutput, PeerComparison
@@ -62,3 +63,36 @@ def test_retry_feedback_reaches_agent_task(patched):
     mod, calls = patched
     mod.run("HDFCBANK.NS", "HDFC Bank Ltd", retry_feedback="verify peer market caps")
     assert "verify peer market caps" in str(calls["agent_input"])
+
+
+def test_fundamentals_tool_never_returns_nan(monkeypatch):
+    """Tool output is fed straight back into the ReAct loop, so a NaN here
+    lands in the next request and Groq rejects it with tool_use_failed."""
+    from agents import competitor_intelligence_agent as mod
+    monkeypatch.setattr(mod.market_tools, "get_fundamentals", lambda t: {
+        "pe_ratio": float("nan"), "roe": 15.0, "debt_to_equity": float("nan"),
+        "revenue": 5e11, "pb_ratio": 2.8, "dividend_yield": None})
+    result = mod.get_fundamentals.invoke({"ticker": "ICICIBANK.NS"})
+    assert "NaN" not in result
+    assert '"pe_ratio": null' in result
+
+
+def test_price_returns_tool_never_returns_nan(monkeypatch):
+    from agents import competitor_intelligence_agent as mod
+    hist = pd.DataFrame(
+        {"Close": [100.0 + i for i in range(129)] + [float("nan")]},
+        index=pd.date_range("2026-01-01", periods=130, freq="B"))
+    monkeypatch.setattr(mod.market_tools, "get_price_history",
+                        lambda t, period="6mo": hist)
+    result = mod.get_price_returns.invoke({"ticker": "ICICIBANK.NS"})
+    assert "NaN" not in result
+    assert '"ret_1m": null' in result
+
+
+def test_stock_info_tool_never_returns_nan(monkeypatch):
+    from agents import competitor_intelligence_agent as mod
+    monkeypatch.setattr(mod.market_tools, "get_stock_info", lambda t: {
+        "sector": "Technology", "industry": "Solar",
+        "market_cap": float("nan"), "description": "Solar modules."})
+    result = mod.get_stock_info.invoke({"ticker": "WAAREEENER.NS"})
+    assert "NaN" not in result

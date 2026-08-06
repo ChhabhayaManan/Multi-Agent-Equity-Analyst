@@ -1,4 +1,6 @@
 import logging
+import math
+import numbers
 import os
 from functools import wraps
 from pathlib import Path
@@ -22,6 +24,18 @@ def load_config() -> dict:
         or os.getenv("ALPHA_VANTAGE_API"),
         "HUGGINGFACEHUB_API_TOKEN": os.getenv("HUGGINGFACEHUB_API_TOKEN"),
     }
+
+
+def scrub_nan(value):
+    """Recursively replace NaN/inf with None. json.dumps writes NaN as a bare
+    token, which is invalid JSON and makes Groq reject the generation."""
+    if isinstance(value, dict):
+        return {k: scrub_nan(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [scrub_nan(v) for v in value]
+    if isinstance(value, numbers.Real) and not isinstance(value, (bool, int)):
+        return None if math.isnan(value) or math.isinf(value) else value
+    return value
 
 
 def get_cache() -> Cache:
