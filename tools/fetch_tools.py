@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import fitz  # PyMuPDF
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup # for parsing HTML
 
 from utils.helpers import disk_cache, get_logger, load_config
 from utils.tracing import traceable
@@ -13,13 +13,16 @@ logger = get_logger(__name__)
 
 NEWSDATA_URL = "https://newsdata.io/api/1/latest"
 SCREENER_BASE = "https://www.screener.in/company"
-# screener.in serves 403 to default python-requests UA; a real browser UA is required.
+
+# user-agent set client as a real browser to avoid blocking by screener.in
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     )
 }
+
+#fields to fetch from news article response 
 _ARTICLE_FIELDS = (
     "article_id",
     "title",
@@ -35,20 +38,9 @@ _ARTICLE_FIELDS = (
 @disk_cache(ttl_hours=6)
 @traceable(name="fetch_news_articles")
 def fetch_news_articles(ticker: str, company_name: str, hours: int = 48) -> List[dict]:
-    """Fetch recent news for company_name from newsdata.io (/api/1/latest).
-
-    KNOWN LIMITATION: `timeframe` is capped at 48 hours on paid plans and is
-    NOT a 30-day window; true historical ranges need the paid Archive API.
-    In practice the free plan rejects `timeframe` outright (422 'upgrade your
-    plan'), so on that error we retry without it and take whatever recency
-    /latest gives (free-plan results are already delayed ~12h). `size` is
-    capped at 10 per request on the free plan.
-
-    company_name is sent as a quoted exact phrase and each article is
-    post-filtered to contain the name verbatim, to avoid pulling news of
-    similarly-named companies (e.g. Waaree Energies vs Waaree Renewable Energy).
     """
-    # Key goes in a header, not the URL, so it can't leak via logs/tracebacks.
+    fetch recent(last 48h) news articles for a given company name from newsdata.io API.
+    """
     headers = {"X-ACCESS-KEY": load_config()["NEWSDATA_API_KEY"]}
     params = {
         "q": f'"{company_name}"',
@@ -58,7 +50,6 @@ def fetch_news_articles(ticker: str, company_name: str, hours: int = 48) -> List
         "size": 10,
     }
     articles: List[dict] = []
-    # First page + at most 2 nextPage follows, to stay within the daily credit budget.
     for _ in range(3):
         resp = requests.get(NEWSDATA_URL, params=params, headers=headers, timeout=30)
         if resp.status_code == 422 and "timeframe" in params and "timeframe" in resp.text:
@@ -87,7 +78,7 @@ def resolve_screener_slug(ticker: str) -> str:
 @disk_cache(ttl_hours=24)
 @traceable(name="fetch_screener_page")
 def fetch_screener_page(ticker: str) -> str:
-    """Raw HTML of the screener.in company page (consolidated view, standalone fallback)."""
+    """fetch Raw HTML of the screener.in company page."""
     slug = resolve_screener_slug(ticker)
     resp = requests.get(f"{SCREENER_BASE}/{slug}/consolidated/", headers=_HEADERS, timeout=30)
     if resp.status_code == 404:
@@ -97,7 +88,7 @@ def fetch_screener_page(ticker: str) -> str:
 
 
 def _parse_announcement_date(raw: str) -> Optional[datetime]:
-    """Screener announcement dates: '2d', '5h', '28 Jun', '19 Mar 2025'."""
+    """parse announcement dates: '2d', '5h', '28 Jun', '19 Mar 2025'."""
     raw = raw.strip()
     m = re.match(r"^(\d+)d$", raw)
     if m:
@@ -127,11 +118,7 @@ def _documents_section(ticker: str) -> BeautifulSoup:
 
 
 def fetch_bse_announcements(ticker: str, days: int = 90) -> List[dict]:
-    """BSE announcements from screener's Announcements panel: [{date, title, pdf_url}].
-
-    Date label sits in a .ink-600.smaller div/span as '2d - summary' / '28 Jun' /
-    '19 Mar 2025'; entries whose dates can't be parsed are skipped.
-    """
+    
     section = _documents_section(ticker)
     tab = section.find(id="company-announcements-tab") or section
     cutoff = datetime.now() - timedelta(days=days)
@@ -156,8 +143,6 @@ def fetch_bse_announcements(ticker: str, days: int = 90) -> List[dict]:
 
 
 def _concall_links(ticker: str, label: str) -> List[dict]:
-    """Concalls panel rows: a date div ('May 2026') followed by <a class=concall-link>
-    labeled Transcript/PPT/REC (missing items render as plain <div>, not links)."""
     section = _documents_section(ticker)
     concalls = section.find("div", class_="concalls")
     if concalls is None:
@@ -197,12 +182,10 @@ def fetch_annual_report_url(ticker: str) -> str:
     process_outputs=lambda out: {"chars": len(out or "")},
 )
 def parse_pdf_to_text(url: str) -> str:
-    """Download a PDF and extract text with PyMuPDF, pages joined by newlines.
-
-    PyMuPDF (fitz) is ~20-30x faster than pdfplumber on large (200-400pg)
-    annual reports, which dominated the docs branch latency. No OCR — assumes
-    digitally-generated PDFs; layout/column order is not preserved, which is
-    fine since the text is chunked and embedded for semantic search.
+    """
+    Download a PDF and extract text with PyMuPDF, pages joined by newlines.
+    PyMuPDF is ~20-30x faster than pdfplumber on large (200-400pg) docs, assumes
+    digitally-generated PDFs.
     """
     resp = requests.get(url, headers=_HEADERS, timeout=60)
     resp.raise_for_status()
@@ -217,7 +200,7 @@ def parse_pdf_to_text(url: str) -> str:
 
 @traceable(name="index_pdf_document")
 def index_pdf_document(url: str, ticker: str, source_type: str, meta: Optional[dict] = None) -> None:
-    """Parse a PDF and store its text into Pinecone namespace=ticker in one call."""
+    """Parse a PDF and store its text into Pinecone."""
     from tools.pinecone_tools import store_to_pinecone
 
     text = parse_pdf_to_text(url)
@@ -228,11 +211,8 @@ def index_pdf_document(url: str, ticker: str, source_type: str, meta: Optional[d
 
 
 def fetch_shareholding(ticker: str) -> dict:
-    """Latest-quarter shareholding pattern from screener.in's Shareholding section.
-
-    Screener renders a quarterly table (section id='shareholding'): rows are
-    'Promoters +', 'FIIs +', 'DIIs +', 'Public +'; the last column is the most
-    recent quarter. Returns percentages as floats, None for anything missing.
+    """
+    fetches the latest shareholding pattern from the screener page
     """
     empty = {"promoter": None, "fii": None, "dii": None, "public": None, "quarter": None}
     soup = BeautifulSoup(fetch_screener_page(ticker), "lxml")

@@ -49,6 +49,25 @@ def test_price_moves_overwritten_from_tools(patched):
     assert out.events[1].price_move_5d is None
 
 
+def test_nan_price_moves_never_reach_the_prompt(patched, monkeypatch):
+    """price_move_around divides raw closes, so a missing bar yields NaN."""
+    from agents import event_timeline_creator as mod
+    monkeypatch.setattr(mod, "price_move_around",
+                        lambda t, d: {"pct_1d": float("nan"), "pct_5d": 3.2})
+    captured = {}
+
+    class FakeLLM:
+        def invoke(self, prompt):
+            captured["prompt"] = prompt.to_string()
+            return CANNED
+
+    monkeypatch.setattr(mod, "get_llm", lambda schema=None: FakeLLM())
+    out, _ = mod.run("HDFCBANK.NS", "HDFC Bank Ltd")
+    assert "NaN" not in captured["prompt"]
+    assert out.events[0].price_move_1d is None
+    assert out.events[0].price_move_5d == 3.2
+
+
 def test_unknown_llm_date_gets_none_moves(patched, monkeypatch):
     from agents import event_timeline_creator as mod
     hallucinated = CANNED.model_copy(deep=True)

@@ -1,5 +1,4 @@
-"""Structured outputs for every agent. Field descriptions double as LLM
-instructions under with_structured_output — keep them imperative and exact."""
+"""Structured outputs for every agent. use with_structured_output() for llm models"""
 
 from typing import Literal, Optional
 
@@ -17,7 +16,7 @@ Tone = Literal["confident", "cautious", "defensive"]
 
 
 class PeerComparison(BaseModel):
-    """One competitor of the target stock, with comparison verdicts."""
+    """schema of a competitor peer"""
 
     ticker: str = Field(
         description="Peer's yfinance ticker with exchange suffix",
@@ -42,7 +41,7 @@ class PeerComparison(BaseModel):
 
 
 class CompetitorOutput(BaseModel):
-    """Competitor Intelligence agent result."""
+    """schema for Competitor Intelligence agent output"""
 
     peers: list[PeerComparison] = Field(
         description="3-5 true competitors, best match first")
@@ -55,7 +54,7 @@ class CompetitorOutput(BaseModel):
 
 
 class NewsItem(BaseModel):
-    """One analyzed news article about the target stock."""
+    """schema for an analyzed news article about the target stock."""
 
     title: str = Field(
         description="Simple, concise version of the article headline",
@@ -85,7 +84,7 @@ class NewsItem(BaseModel):
 
 
 class NewsOutput(BaseModel):
-    """News Analysis agent result."""
+    """schema for News Analysis agent output."""
 
     items: list[NewsItem] = Field(
         description="One entry per relevant article. Empty list allowed when the fetch returned nothing relevant")
@@ -98,7 +97,7 @@ class NewsOutput(BaseModel):
 
 
 class TimelineEvent(BaseModel):
-    """One corporate event on the timeline."""
+    """schema for a corporate event on the timeline."""
 
     date: str = Field(
         description="Event/filing date, YYYY-MM-DD",
@@ -130,7 +129,7 @@ class TimelineEvent(BaseModel):
 
 
 class EventOutput(BaseModel):
-    """Event Timeline agent result."""
+    """schema for Event Timeline agent output."""
 
     events: list[TimelineEvent] = Field(
         description="Chronological (oldest first) timeline from ~90 days of announcements. Empty allowed if no announcements found")
@@ -141,7 +140,7 @@ class EventOutput(BaseModel):
 
 
 class GuidanceItem(BaseModel):
-    """One forward-looking management statement."""
+    """schema for a forward-looking management statement."""
 
     metric: str = Field(
         description="What is being guided",
@@ -161,7 +160,7 @@ class GuidanceItem(BaseModel):
 
 
 class RiskItem(BaseModel):
-    """One risk flagged by management or the annual report."""
+    """schema for a risk flagged by management or the annual report."""
 
     risk: str = Field(
         description="The risk, one line",
@@ -176,7 +175,7 @@ class RiskItem(BaseModel):
 
 
 class DocsOutput(BaseModel):
-    """Financial Docs Analyzer result — 3 yrs of concalls + latest annual report."""
+    """schema for Financial Docs Analyzer output"""
 
     guidance: list[GuidanceItem] = Field(
         description="Management guidance found across the documents")
@@ -197,8 +196,7 @@ class DocsOutput(BaseModel):
 
 
 class FundamentalsOutput(BaseModel):
-    """Fundamentals agent result. All numeric dicts are tool-fetched, passed
-    through — the LLM writes only `summary`."""
+    """schema for Fundamentals agent output. llm generates the summary"""
 
     company_profile: dict = Field(
         description="From get_stock_info: sector, industry, business description",
@@ -223,15 +221,18 @@ class FundamentalsOutput(BaseModel):
 
 
 class ReportOutput(BaseModel):
-    """Synthesis agent result — the final research report."""
+    """schema for Synthesis agent output."""
 
     exec_summary: str = Field(
-        description="3-5 sentence executive summary across all sections",
+        description=(
+            "Cross-agent executive overview, about two short paragraphs "
+            "(6-9 sentences). Pull the thread between the numbers, the peer "
+            "set, recent news and events, and what management guides: where "
+            "the company stands on valuation versus peers, what the last "
+            "quarter's news and corporate events imply, and what official "
+            "documents say about the direction. Every claim must come from "
+            "the specialist outputs. No trading advice."),
         examples=["HDFC Bank enters FY27 with steady profit growth, a premium valuation versus peers, and management guiding 17-18% credit growth."])
-    sections: dict[str, str] = Field(
-        description="Markdown body per section. Keys exactly: fundamentals, competitors, events, news, docs. Failed sections carry a one-line 'data unavailable' note",
-        examples=[{"fundamentals": "## Company & Fundamentals\n...",
-                   "competitors": "## Competitive Landscape\n..."}])
     sources: list[str] = Field(
         description="Deduplicated source references carried over from specialist outputs",
         examples=[["Q4 FY26 concall, 2026-04-19",
@@ -242,7 +243,7 @@ class ReportOutput(BaseModel):
 
 
 class ChatbotResponse(BaseModel):
-    """Research chatbot single-turn result."""
+    """schema for Research chatbot single-turn result."""
 
     answer: str = Field(
         description="Guardrail-cleaned answer text with inline citations")

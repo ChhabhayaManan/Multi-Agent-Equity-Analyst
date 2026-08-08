@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
-
 from templates.prompts.common import COMMON_HEADER, RELEVANCE_RULES
 
+# news analysis agent prompt
 NEWS_PROMPT = ChatPromptTemplate.from_messages([
     ("system", COMMON_HEADER + RELEVANCE_RULES + """
 You are a financial news analyst for Indian equities.

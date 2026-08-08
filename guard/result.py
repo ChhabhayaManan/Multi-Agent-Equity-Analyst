@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-
+# result schema for guardrail validation
 @dataclass
 class GuardrailResult:
     passed: bool

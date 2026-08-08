@@ -1,3 +1,4 @@
+# prompt for the combined LLM classifier (advice-request, jailbreak, offensive) working LLM-as-a-judge
 COMBINED_CLASSIFIER_PROMPT = """You are a strict input classifier for an Indian \
 stock-market research chatbot. The chatbot's primary focus is {company_name} \
 ({ticker}), for which it has indexed research documents, but it may answer \

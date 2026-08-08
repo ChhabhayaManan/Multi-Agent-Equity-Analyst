@@ -20,7 +20,7 @@ class FakeAgent:
 @pytest.fixture
 def session(monkeypatch):
     monkeypatch.setattr(ca, "namespace_exists", lambda ticker: True)
-    monkeypatch.setattr(ca, "build_local_tools", lambda t, c: [])
+    monkeypatch.setattr(ca, "build_local_tools", lambda t: [])
     monkeypatch.setattr(ca, "load_alphavantage_tools", lambda: [])
     monkeypatch.setattr(ca, "_create_agent", lambda system_prompt, tools: None)
     monkeypatch.setattr(ca, "summarize_turn", lambda q, a: f"sum({q[:20]})")

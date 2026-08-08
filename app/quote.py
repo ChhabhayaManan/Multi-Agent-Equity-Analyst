@@ -1,12 +1,10 @@
-"""Live quote for the report header metric tiles. Cached so Streamlit reruns
-don't re-hit yfinance. Kept out of tools/market_tools.py because the st cache
-is a frontend concern; fails soft (returns None -> tiles hidden)."""
+"""Live quote for the report."""
 from typing import Optional
 
 import streamlit as st
 import yfinance as yf
 
-
+# live quote fetch is cached for 15 minutes to avoid rate limits and slow page loads
 @st.cache_data(ttl=900, show_spinner=False)
 def get_quote(symbol: str) -> Optional[dict]:
     try:

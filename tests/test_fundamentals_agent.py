@@ -36,6 +36,7 @@ def patched(monkeypatch):
 
     class FakeLLM:
         def invoke(self, prompt):
+            stored["prompt"] = prompt.to_string()
             return llm_output
 
     monkeypatch.setattr(mod, "get_llm", lambda schema=None: FakeLLM())
@@ -63,3 +64,43 @@ def test_price_snapshot_math(patched):
     assert snap["high_52w"] == 349.0 and snap["low_52w"] == 100.0
     assert snap["ret_1y"] is not None and snap["ret_1y"] > 0
     assert snap["mktcap_cr"] == 100000.0                  # 1e12 INR / 1e7
+
+
+def test_stale_last_close_yields_none_not_nan(monkeypatch, patched):
+    """yfinance often carries a partial final bar with a NaN close. Every
+    field derived from it must come out None, never NaN: json.dumps writes
+    NaN as a bare token, the LLM copies it into its tool-call arguments and
+    Groq rejects the generation with 400 tool_use_failed."""
+    mod, _ = patched
+    hist = pd.DataFrame(
+        {"Close": [100.0 + i for i in range(249)] + [float("nan")]},
+        index=pd.date_range("2025-07-01", periods=250, freq="B",
+                            tz="Asia/Kolkata"))
+    monkeypatch.setattr(mod, "get_price_history", lambda t, period="1y": hist)
+
+    out, _ = mod.run("HDFCBANK.NS", "HDFC Bank Ltd")
+    snap = out.price_snapshot
+    assert snap["price"] is None
+    assert snap["ret_1m"] is None and snap["ret_6m"] is None
+    assert snap["ret_1y"] is None
+    assert snap["high_52w"] == 348.0 and snap["low_52w"] == 100.0  # NaN skipped
+
+
+def test_nan_never_reaches_the_prompt(monkeypatch, patched):
+    """Defence in depth: NaN from any upstream source (price history OR the
+    yfinance ratio fields) must be gone by the time the context is built."""
+    mod, stored = patched
+    hist = pd.DataFrame(
+        {"Close": [100.0 + i for i in range(249)] + [float("nan")]},
+        index=pd.date_range("2025-07-01", periods=250, freq="B",
+                            tz="Asia/Kolkata"))
+    monkeypatch.setattr(mod, "get_price_history", lambda t, period="1y": hist)
+    monkeypatch.setattr(mod, "get_fundamentals", lambda t: {
+        "pe_ratio": float("nan"), "roe": float("nan"), "debt_to_equity": 21.4,
+        "revenue": 5e11, "pb_ratio": 5.37, "dividend_yield": float("nan")})
+
+    out, fetch_count = mod.run("HDFCBANK.NS", "HDFC Bank Ltd")
+    assert "NaN" not in stored["prompt"]
+    assert out.valuation["pe"] is None and out.valuation["roe"] is None
+    # NaN is not a fetched datapoint, so it must not inflate the count.
+    assert fetch_count == 2                               # pb, debt_equity

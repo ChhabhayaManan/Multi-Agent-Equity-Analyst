@@ -1,9 +1,6 @@
-"""News agent. Fetches 48h of newsdata.io articles, stores them for the
-chatbot, and feeds them DIRECTLY to the LLM (not via a Pinecone query:
-serverless is eventually consistent, an immediate query could miss)."""
+"""An Agent which fetches news details and processes it."""
 
 import json
-
 from templates.prompts.news_analysis_generator import NEWS_PROMPT
 from templates.schemas.outputs import NewsOutput
 from tools.fetch_tools import fetch_news_articles
@@ -21,7 +18,7 @@ def _article_text(a: dict) -> str:
 
 
 def run(ticker: str, company_name: str, retry_feedback: str = ""):
-    articles = fetch_news_articles(ticker, company_name)
+    articles = fetch_news_articles(ticker, company_name) # fetching data
     fetch_count = len(articles)
     if articles:
         try:
@@ -31,7 +28,7 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
             logger.exception("news: pinecone store failed (non-fatal)")
 
     payload = json.dumps(articles, indent=2, default=str) if articles else "NO ARTICLES FOUND"
-    llm = get_llm(NewsOutput)
+    llm = get_llm(NewsOutput) #llm call
     out = llm.invoke(NEWS_PROMPT.invoke({
         "ticker": ticker, "company_name": company_name,
         "articles": payload, "retry_feedback": retry_feedback}))

@@ -1,5 +1,4 @@
-"""Graph assembly: prepare -> 5 parallel validate-retry branches ->
-synthesis (defer=True) -> END."""
+"""Multi-Agent Graph definition"""
 
 from typing import Iterator
 
@@ -9,7 +8,7 @@ from workflow.edges import make_router
 from workflow.nodes import make_run_node, make_validate_node, prepare, synthesis
 from workflow.state import AGENTS, GraphState
 
-
+# fn. for building the graph, returns a compiled graph object
 def build_graph():
     builder = StateGraph(GraphState)
     builder.add_node("prepare", prepare)
@@ -26,11 +25,10 @@ def build_graph():
     builder.add_edge("synthesis", END)
     return builder.compile()
 
-
+# metadata for the graph run, used for logging and tracing
 def _run_config(ticker: str) -> dict:
     return {"tags": [ticker],
             "metadata": {"run_type": "report", "ticker": ticker}}
-
 
 def generate_report(ticker: str, company_name: str) -> dict:
     """Entry point for the frontend: returns the full GraphState."""
@@ -40,27 +38,32 @@ def generate_report(ticker: str, company_name: str) -> dict:
 
 
 def stream_report(ticker: str, company_name: str) -> Iterator[dict]:
-    """Streaming entry point for the frontend. Runs the graph with
-    stream_mode='updates' and yields one dict per node update:
-    {node, runs, report, done}. `runs` accumulates across yields; the final
-    yield sets done=True and carries the completed report."""
+    """Streaming entry point for the frontend. Yields partial GraphState updates as they are produced."""
     graph = build_graph()
     runs: dict = {}
+    specialists: dict = {name: None for name in AGENTS}
     report = None
     last_node = None
     for update in graph.stream(
             {"ticker": ticker, "company_name": company_name},
-            stream_mode="updates", config=_run_config(ticker)):
-        for node, partial in update.items():
+            stream_mode="updates", config=_run_config(ticker)): # stream_mode="updates" means the graph will yield partial updates as they are produced
+        for node, partial in update.items(): 
             last_node = node
             if partial and partial.get("runs"):
                 runs = {**runs, **partial["runs"]}
+            if partial:
+                for name in AGENTS:
+                    if partial.get(name) is not None:
+                        specialists[name] = partial[name]
             if partial and partial.get("report") is not None:
                 report = partial["report"]
-            yield {"node": node, "runs": runs, "report": report, "done": False}
-    yield {"node": last_node, "runs": runs, "report": report, "done": True}
+            yield {"node": node, "runs": runs, "specialists": dict(specialists),
+                   "report": report, "done": False}
+    yield {"node": last_node, "runs": runs, "specialists": dict(specialists),
+           "report": report, "done": True}
 
 
+# dev/test function for running the graph from the command line
 if __name__ == "__main__":
     import sys
 

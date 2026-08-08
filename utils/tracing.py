@@ -1,43 +1,37 @@
-# utils/tracing.py
-"""LangSmith tracing bootstrap. Opt-in via env; a no-op without a key so
-local runs never hard-depend on LangSmith."""
+"""Utils related to the tracing of langchain calls and tools, via langsmith."""
 
 import os
-
 from dotenv import load_dotenv
-
 from utils.helpers import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_ENDPOINT = "https://api.smith.langchain.com"
+_DEFAULT_ENDPOINT = "https://aws.api.smith.langchain.com"
 _DEFAULT_PROJECT = "stock-research"
 _initialized = False
 
 
 def init_tracing() -> bool:
-    """Enable LangSmith tracing iff LANGCHAIN_API_KEY is set. Idempotent.
-    Returns True when tracing is enabled, False when it is a no-op."""
+    """Initialize LangSmith tracing, if the api key exists."""
     global _initialized
     load_dotenv()
-    if not os.getenv("LANGCHAIN_API_KEY"):
+    if not os.getenv("LANGSMITH_API_KEY"):
         if not _initialized:
-            logger.info("LangSmith tracing disabled (no LANGCHAIN_API_KEY)")
+            logger.info("LangSmith tracing disabled (no LANGSMITH_API_KEY)")
         _initialized = True
-        return os.environ.get("LANGCHAIN_TRACING_V2") == "true"
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ.setdefault("LANGCHAIN_ENDPOINT", _DEFAULT_ENDPOINT)
-    os.environ.setdefault("LANGCHAIN_PROJECT", _DEFAULT_PROJECT)
+        return os.environ.get("LANGSMITH_TRACING") == "true"
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ.setdefault("LANGSMITH_ENDPOINT", _DEFAULT_ENDPOINT)
+    os.environ.setdefault("LANGSMITH_PROJECT", _DEFAULT_PROJECT)
     if not _initialized:
         logger.info("LangSmith tracing enabled (project=%s)",
-                    os.environ["LANGCHAIN_PROJECT"])
+                    os.environ["LANGSMITH_PROJECT"])
     _initialized = True
     return True
 
 
 def set_run_metadata(metadata: dict) -> None:
-    """Attach metadata to the current LangSmith run, if any. No-op when
-    tracing is off or langsmith is unavailable."""
+    """Attach metadata to the current process, if Langsmith is not available this is a no-op."""
     try:
         from langsmith.run_helpers import get_current_run_tree
     except Exception:
@@ -51,8 +45,7 @@ def set_run_metadata(metadata: dict) -> None:
 
 
 def traceable(*dargs, **dkwargs):
-    """`langsmith.traceable` when importable, else a no-op decorator that
-    supports both `@traceable` and `@traceable(...)` usage."""
+    """returns langsmith.traceable if available, else a no-op decorator."""
     try:
         from langsmith import traceable as _lt
         return _lt(*dargs, **dkwargs)

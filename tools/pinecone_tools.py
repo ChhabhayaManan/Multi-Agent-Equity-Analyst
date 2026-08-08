@@ -3,7 +3,6 @@ import os
 import time
 from functools import lru_cache
 from typing import List, Optional
-from threading import Lock
 from pinecone import Pinecone, ServerlessSpec
 from abc import ABC, abstractmethod
 from utils.helpers import get_logger, load_config
@@ -11,21 +10,15 @@ from utils.tracing import traceable
 
 logger = get_logger(__name__)
 
-# ==== Embedding configuration (NVIDIA NIM) ====
+# Embeding Configuration
 INDEX_NAME = "stock-research"
 EMBED_DIM = 4096  # NV-Embed-v1 outputs 4096-dim vectors
 NVIDIA_MODEL = "nvidia/nv-embed-v1"
 
-# Chunk size in characters (~6k-8k tokens assuming ~4 chars/token)
-# Using 24000 chars ≈ 6000 tokens, safe for most LLMs.
+
 CHUNK_SIZE = 4000
-CHUNK_OVERLAP = 500  # ~50 tokens overlap
+CHUNK_OVERLAP = 500  
 
-
-def _split_keys(raw: Optional[str]) -> List[str]:
-    if not raw:
-        return []
-    return [part.strip() for part in re.split(r"[\\n,;]+", raw) if part.strip()]
 
 
 def _get_nvidia_api_key() -> str:
@@ -35,7 +28,6 @@ def _get_nvidia_api_key() -> str:
         cfg.get("NVIDIA_API_KEY")
         or os.getenv("NVIDIA_API_KEY")
     )
-    # Basic validation: key should be a non-empty string.
     if not key or not isinstance(key, str):
         raise RuntimeError("NVIDIA API key not found. Set NVIDIA_API_KEY in .env or config.")
     return key.strip()
@@ -87,30 +79,20 @@ class NVIDIAEmbedder(Embedder):
         return self._client.embed_documents(texts)
 
 
-# ----- Singleton embedder (lazy, cached) -----
+# singleton embedder
 @lru_cache(maxsize=None)
-def _get_embedder() -> NVIDIAEmbedder:
-    return NVIDIAEmbedder(_get_nvidia_api_key())
-
-
 def get_current_embedder() -> Embedder:
-    return _get_embedder()
-
-
-def select_embedder() -> Embedder:
-    """Compatibility alias used elsewhere."""
-    return get_current_embedder()
+    return NVIDIAEmbedder(_get_nvidia_api_key())
 
 
 def reset_embed_floor() -> None:
     """Reset the cached embedder (no-op for singleton, but kept for compatibility)."""
-    _get_embedder.cache_clear()
+    get_current_embedder.cache_clear()
 
 
-# ==== Pinecone utilities (unchanged) ====
 def namespace_of(ticker: str) -> str:
     """HDFCBANK.NS -> HDFCBANK. Strips exchange suffix, keeps alphanum, uppercases."""
-    base = re.sub(r"\\.(NS|BO)$", "", ticker.strip(), flags=re.IGNORECASE)
+    base = re.sub(r"\.(NS|BO)$", "", ticker.strip(), flags=re.IGNORECASE)
     return re.sub(r"[^A-Za-z0-9]", "", base).upper()
 
 
@@ -126,7 +108,7 @@ def _get_client() -> Pinecone:
 
 
 def get_index():
-    """Lazy singleton for the shared 'stock-research' serverless index (creates if missing)."""
+    
     global _index
     if _index is None:
         pc = _get_client()
@@ -143,7 +125,7 @@ def get_index():
     return _index
 
 
-# ==== Core embedding function ====
+# Core embedding function
 @traceable(
     name="embed_texts",
     process_inputs=lambda inp: {"n_texts": len(inp.get("texts") or []),
@@ -159,7 +141,7 @@ def embed_texts(texts: List[str], input_type: str = "passage") -> List[List[floa
     return embedder.embed(texts, input_type=input_type)
 
 
-# ==== Remaining Pinecone helpers (unchanged) ====
+#check if a namespace exists and has at least one vector.
 def check_index(ticker: str, source_type: str) -> bool:
     """True if namespace=ticker holds at least one vector tagged with source_type."""
     ticker = namespace_of(ticker)
@@ -257,41 +239,6 @@ def namespace_exists(ticker: str) -> bool:
     stats = get_index().describe_index_stats()
     ns = stats.namespaces or {}
     return ticker in ns and getattr(ns[ticker], "vector_count", 0) > 0
-
-
-def _doc_id_from_vid(vid: str, ticker: str) -> str:
-    """Fallback: parse '{ticker}-{doc_key}-{i}' -> doc_key when metadata lacks document_id."""
-    core = vid[len(ticker) + 1 :] if vid.startswith(ticker + "-") else vid
-    return core.rsplit("-", 1)[0] if "-" in core else core
-
-
-def list_documents(ticker: str) -> dict:
-    """Distinct indexed documents in namespace=ticker, grouped by source_type."""
-    ticker = namespace_of(ticker)
-    if not namespace_exists(ticker):
-        return {}
-    index = get_index()
-    ids: List[str] = []
-    for page in index.list(namespace=ticker):
-        ids.extend(page)
-    docs: dict = {}
-    for start in range(0, len(ids), 100):
-        resp = index.fetch(ids=ids[start:start + 100], namespace=ticker)
-        vectors = getattr(resp, "vectors", {}) or {}
-        for vec in vectors.values():
-            md = getattr(vec, "metadata", None) or {}
-            st = md.get("source_type", "unknown")
-            doc_id = md.get("document_id") or _doc_id_from_vid(getattr(vec, "id", ""), ticker)
-            bucket = docs.setdefault(st, {})
-            entry = bucket.setdefault(
-                doc_id,
-                {"document_id": doc_id, "date": md.get("date"),
-                 "source_type": st, "chunk_count": 0},
-            )
-            entry["chunk_count"] += 1
-            if entry["date"] is None and md.get("date"):
-                entry["date"] = md["date"]
-    return {st: list(by_id.values()) for st, by_id in docs.items()}
 
 
 def delete_namespace(ticker: str) -> None:

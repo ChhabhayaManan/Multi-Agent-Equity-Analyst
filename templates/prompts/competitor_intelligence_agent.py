@@ -1,10 +1,8 @@
-from langchain_core.prompts import ChatPromptTemplate
+from templates.prompts.common import COMMON_HEADER
 
-from templates.prompts.common import COMMON_HEADER, RELEVANCE_RULES
-
-# System prompt for the ReAct phase (plain string - create_react_agent takes
-# a string prompt; tools provide the data).
-COMPETITOR_SYSTEM = COMMON_HEADER + """
+# Competitor intelligence agent prompt
+# not used the chatPromptTemplate as this will be used with the ReAct Agent create_agent
+COMPETITOR_PROMPT = COMMON_HEADER + """
 You are a competitor intelligence analyst for Indian equities (NSE/BSE only).
 Target stock: {ticker} ({company_name}).
 Identify 3-5 true competitors: same sector, similar market cap, overlapping
@@ -22,15 +20,3 @@ peer: ticker, name, why it qualifies, its metrics, how hard it competes with
 the target, and whether the target is ahead of, in line with, or behind it.
 End with an overall verdict for the target versus the peer set.
 """
-
-# Second phase: force the ReAct transcript into CompetitorOutput.
-COMPETITOR_STRUCT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", COMMON_HEADER + RELEVANCE_RULES + """
-Convert the analyst transcript below into the structured competitor output.
-Use ONLY facts and numbers present in the transcript; metrics the transcript
-does not contain stay null. competition_intensity is one of FIERCE / STRONG /
-MODERATE / MILD; target_standing and overall_standing are one of AHEAD /
-INLINE / BEHIND."""),
-    ("human", "Ticker: {ticker} ({company_name})\n"
-              "Analyst transcript:\n{transcript}\n{retry_feedback}"),
-])

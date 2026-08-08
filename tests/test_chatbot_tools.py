@@ -8,7 +8,7 @@ import chatbot.chatbot_tools as ct
 
 @pytest.fixture
 def tools_by_name():
-    tools = ct.build_local_tools("HDFCBANK.NS", "HDFC Bank Ltd")
+    tools = ct.build_local_tools("HDFCBANK.NS")
     return {t.name: t for t in tools}
 
 

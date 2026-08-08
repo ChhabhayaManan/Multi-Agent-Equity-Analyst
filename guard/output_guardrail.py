@@ -9,23 +9,12 @@ from utils.helpers import get_logger
 
 logger = get_logger(__name__)
 
-# A response sentence is grounded if its cosine similarity to at least one
-# retrieved chunk clears this threshold (nvidia/nv-embed-v1 embeddings).
 GROUNDEDNESS_THRESHOLD = 0.6
 
-# Embeddings can't match short numeric prose ("price is 3595.0 INR") to terse
-# JSON tool output ('{"price": 3595.0}') — measured sim ~0.4-0.5, under the
-# threshold. A sentence citing a number that appears verbatim in a grounding
-# chunk is therefore also considered grounded (numeric-overlap path).
 _NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")
 
-# The system prompt mandates this exact refusal; it asserts no facts, so it
-# must never be stripped as ungrounded.
-REFUSAL_PHRASE = "i don't have that information"
+REFUSAL_PHRASE = "I don't have that information"
 
-# Advice language patterns. Deliberately require advice *context*, not bare
-# keywords — "promoters hold 74%" and "FIIs bought shares" are factual and
-# must survive; "you should buy this stock" must not.
 _ACTION = r"(buy|sell|hold|invest|exit|accumulat\w*|book(?:ing)? profits?|enter)"
 ADVICE_PATTERNS = [
     re.compile(p, re.IGNORECASE)
@@ -42,29 +31,25 @@ ADVICE_PATTERNS = [
 def _split_sentences(text: str) -> List[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
 
-
+# pattern check, if matches --> advice
 def _is_advice(sentence: str) -> bool:
     return any(p.search(sentence) for p in ADVICE_PATTERNS)
 
-
+# cosine similarity between two vectors
 def _cosine(a: List[float], b: List[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return dot / norm if norm else 0.0
 
-
+# response is considered a refusal if it contains the refusal phrase
 def _is_refusal(sentence: str) -> bool:
-    return REFUSAL_PHRASE in sentence.lower().replace("’", "'")
+    return REFUSAL_PHRASE.lower() in sentence.lower().replace("’", "'")
 
 
 def _numeric_overlap(sentence: str, chunks_norm: List[str]) -> bool:
-    """True if any number cited in the sentence matches a number in any
-    grounding chunk, within the precision the sentence itself uses.
-
-    Tool outputs carry raw float precision ("2859.199951171875") while the
-    LLM reports a rounded value ("2859.20") — a plain substring/exact-string
-    match would reject that as ungrounded, so chunk values are rounded to the
-    sentence number's own decimal-place count before comparing.
+    """
+    Check if any numeric value in the sentence matches a numeric value in the chunks.
+    with rounding to the same number of decimal places as in the sentence.
     """
     for raw_num in _NUMBER_RE.findall(sentence):
         clean = raw_num.replace(",", "")
@@ -85,9 +70,9 @@ def _numeric_overlap(sentence: str, chunks_norm: List[str]) -> bool:
 
 
 def _grounded_flags(sentences: List[str], chunks: List[str]) -> List[bool]:
-    """One flag per sentence: True if the sentence is the mandated refusal,
-    cites a number present in a chunk, or clears GROUNDEDNESS_THRESHOLD vs
-    any chunk by embedding similarity."""
+    """checking if each sentence is grounded in the retrieved chunks, using embeddings and cosine similarity.
+    if grounded --> True
+    else --> False --> will be removed from the final response"""
     chunks_norm = [c.replace(",", "") for c in chunks]
     flags = []
     pending = []  # indices still needing the embedding check
@@ -109,7 +94,9 @@ def _grounded_flags(sentences: List[str], chunks: List[str]) -> List[bool]:
 
 
 class OutputGuardrail:
+    
     def validate(self, llm_response: str, retrieved_chunks: List[str]) -> GuardrailResult:
+        """Validate the LLM response against advice and grounding rules."""
         try:
             sentences = _split_sentences(llm_response)
             violations = []

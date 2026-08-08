@@ -1,5 +1,4 @@
-"""Session-only conversation memory: per-turn 2-3 line summaries + a
-verbatim window of the last N ok turns. Nothing persisted to disk."""
+"""A in-memory conversation history for the chatbot agent, with turn summaries and a context window."""
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -19,7 +18,7 @@ SUMMARY_PROMPT = (
 
 _groq_client: Optional[Groq] = None
 
-
+# to summarize the turn 
 def _summary_llm_call(prompt: str) -> str:
     global _groq_client
     if _groq_client is None:
@@ -33,8 +32,7 @@ def _summary_llm_call(prompt: str) -> str:
 
 
 def summarize_turn(question: str, answer: str) -> str:
-    """2-3 line turn summary; truncation fallback so a summarizer failure
-    never blocks the turn."""
+    """Summarize a single turn, with fallback to a truncated Q&A if the LLM fails."""
     try:
         return _summary_llm_call(
             SUMMARY_PROMPT.format(question=question, answer=answer))
@@ -42,7 +40,7 @@ def summarize_turn(question: str, answer: str) -> str:
         logger.warning("Turn summarizer failed, using fallback: %s", exc)
         return f"Q: {question[:150]} | A: {answer[:150]}"
 
-
+# a dataclass to store a single turn of conversation (user input, assistant response, summary, and status)
 @dataclass
 class Turn:
     user: str
@@ -56,16 +54,17 @@ class ConversationMemory:
         self.turns: List[Turn] = []
         self._n = verbatim_turns
 
+    # Add a new turn to the conversation memory
     def add_turn(self, user: str, assistant: str, summary: str,
                  status: str = "ok") -> None:
         self.turns.append(Turn(user, assistant, summary, status))
 
     def context_messages(self) -> List[Tuple[str, str]]:
-        """Older/non-ok turns as one system summary note + last-N ok turns
-        verbatim. Blocked/error turns never appear verbatim."""
+        """Return a list of (role, content) tuples for the last N turns(as it is), with earlier turns summarized."""
         window = self.turns[-self._n:]
         verbatim = [t for t in window if t.status == "ok"]
-        summarized = [t for t in self.turns if t not in verbatim]
+        verbatim_ids = {id(t) for t in verbatim}
+        summarized = [t for t in self.turns if id(t) not in verbatim_ids]
 
         messages: List[Tuple[str, str]] = []
         if summarized:
@@ -78,5 +77,5 @@ class ConversationMemory:
         return messages
 
     def history_text(self) -> str:
-        """Compact bullet list of recent turn summaries for the guardrail judge."""
+        """Return a text summary of the last 10 turns, for guardrail checks."""
         return "\n".join(f"- {t.summary}" for t in self.turns[-10:])

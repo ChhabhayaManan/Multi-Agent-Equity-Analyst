@@ -1,9 +1,4 @@
-"""LangChain @tool wrappers for the research chatbot.
-
-Every tool returns a JSON string. Tools never raise: failures come back as
-{"error": "..."} so the agent can work around them. Outputs are truncated to
-MAX_TOOL_CHARS before reaching the LLM.
-"""
+"""Tools for the chatbot agent, including local tools and remote MCP tools."""
 
 import asyncio
 import json
@@ -24,14 +19,14 @@ MAX_TOOL_CHARS = 2000
 CHART_DIR = Path("data/charts")
 SOURCE_TYPES = {"news", "docs", "events", "competitor", "report"}
 
-
+# serialize and truncate tool outputs to JSON for the LLM
 def _to_json(payload) -> str:
     text = json.dumps(payload, default=str)
     if len(text) > MAX_TOOL_CHARS:
         text = text[:MAX_TOOL_CHARS] + "...[truncated]"
     return text
 
-
+# wrap a tool function to catch exceptions and return a JSON error message
 def _safe(fn):
     try:
         return _to_json(fn())
@@ -39,7 +34,7 @@ def _safe(fn):
         logger.warning("chatbot tool failed: %s", exc)
         return _to_json({"error": str(exc)})
 
-
+# save a plotly figure to an HTML file and return the path
 def _save_chart(fig, name: str) -> str:
     CHART_DIR.mkdir(parents=True, exist_ok=True)
     path = CHART_DIR / f"{name}_{int(time.time())}.html"
@@ -47,15 +42,14 @@ def _save_chart(fig, name: str) -> str:
     return str(path)
 
 
-def build_local_tools(ticker: str, company_name: str) -> list:
+def build_local_tools(ticker: str) -> list:
     """All local tools, closed over the session's primary ticker."""
     session_ticker = ticker
 
     @tool
     def search_research(query: str, source_type: str = "") -> str:
-        """Search the indexed research documents for the session's primary
-        stock. source_type: one of news|docs|events|competitor|report, or
-        empty to search all sources. Returns the top 5 most relevant chunks."""
+        """a search tool for relevant research documents, news, events, competitor filings, and reports.
+        from pinecone + cohere rerank. Use only when the user asks for research or sources."""
 
         def run():
             st = source_type if source_type in SOURCE_TYPES else None
@@ -75,7 +69,7 @@ def build_local_tools(ticker: str, company_name: str) -> list:
 
     @tool
     def get_live_price(ticker: str) -> str:
-        """Live/last traded price for any NSE/BSE ticker (e.g. TCS.NS)."""
+        """live/Last traded price for any NSE/BSE ticker."""
         return _safe(lambda: {"ticker": ticker,
                               "price": market_tools.get_live_price(ticker)})
 
@@ -93,8 +87,7 @@ def build_local_tools(ticker: str, company_name: str) -> list:
 
     @tool
     def get_price_history(ticker: str, period: str = "1mo") -> str:
-        """OHLC price summary over a period (1mo|3mo|6mo|1y|2y|5y) for any
-        NSE/BSE ticker: first/last close, min, max, % change."""
+        """price history for any NSE/BSE ticker, with summary stats. period can be 1mo, 3mo, 6mo, 1y, 2y, 5y, or max."""
 
         def run():
             df = market_tools.get_price_history(ticker, period)
@@ -120,16 +113,12 @@ def build_local_tools(ticker: str, company_name: str) -> list:
 
     @tool
     def resolve_ticker(query: str) -> str:
-        """Resolve a company name to NSE/BSE tickers (e.g. 'Tata Consultancy'
-        -> TCS.NS). Use before other tools when the user names a company
-        without a ticker."""
+        """to get the ticker of the company from it's name"""
         return _safe(lambda: {"matches": market_tools.search_ticker(query)[:5]})
 
     @tool
     def get_recent_news(ticker: str, company_name: str, hours: int = 48) -> str:
-        """Recent news headlines for any listed company (newsdata.io). Use
-        only when the user explicitly asks for news. company_name must be the
-        full listed name."""
+        """Recent news articles for a ticker/company, from the last N hours (default 48)."""
 
         def run():
             articles = fetch_news_articles(ticker, company_name, hours=hours)
@@ -144,7 +133,7 @@ def build_local_tools(ticker: str, company_name: str) -> list:
     @tool
     def plot_price_chart(ticker: str, period: str = "6mo") -> str:
         """Render a candlestick price chart for one ticker and save it as an
-        HTML file. Use when the user asks to see/plot/visualize a price."""
+        HTML file."""
 
         def run():
             import plotly.graph_objects as go
@@ -202,15 +191,14 @@ def build_local_tools(ticker: str, company_name: str) -> list:
             get_recent_news, plot_price_chart, plot_comparison_chart]
 
 
-# --- Alpha Vantage MCP ------------------------------------------------------
 
 AV_ALLOWLIST = {
-    # fundamentals
+    # fundamental tools 
     "COMPANY_OVERVIEW", "INCOME_STATEMENT", "BALANCE_SHEET", "CASH_FLOW",
     "EARNINGS",
-    # technicals
-    "RSI", "SMA", "MACD",
-    # alpha intelligence
+    # technicals tools RSI -- Relative Strength Index, SMA -- Simple Moving Average, MACD -- Moving Average Convergence Divergence
+    "RSI" , "SMA", "MACD",
+    # alpha intelligence tools
     "NEWS_SENTIMENT", "TOP_GAINERS_LOSERS", "INSIDER_TRANSACTIONS",
     "EARNINGS_CALL_TRANSCRIPT", "ANALYTICS_FIXED_WINDOW",
 }
@@ -235,12 +223,15 @@ def _cache_coroutine(tool):
 
 
 def filter_av_tools(tools: list) -> list:
-    """Keep only allowlisted Alpha Vantage tools; disk-cache their calls."""
+    """filter and cache AV tools."""
     return [_cache_coroutine(t) for t in tools if t.name.upper() in AV_ALLOWLIST]
 
 
 def load_alphavantage_tools() -> list:
-    """Alpha Vantage remote MCP tools, or [] if unavailable. Never raises."""
+    """
+    A function to load Alpha Vantage MCP tools, with caching and allowlist filtering.
+    if error --> returns empty list
+    """
     key = load_config().get("ALPHAVANTAGE_API_KEY")
     if not key:
         logger.warning("ALPHAVANTAGE_API_KEY not set; running without AV tools")

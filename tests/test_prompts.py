@@ -13,7 +13,6 @@ def test_all_templates_render_with_ticker():
     from templates.prompts.news_analysis_generator import NEWS_PROMPT
     from templates.prompts.event_timeline_creator import EVENTS_PROMPT
     from templates.prompts.financial_docs_analyzer import DOCS_PROMPT
-    from templates.prompts.competitor_intelligence_agent import COMPETITOR_STRUCT_PROMPT
     from templates.prompts.synthesis_agent import SYNTHESIS_PROMPT
 
     rendered = [
@@ -21,7 +20,6 @@ def test_all_templates_render_with_ticker():
         _render(NEWS_PROMPT, articles="[]"),
         _render(EVENTS_PROMPT, announcements="[]"),
         _render(DOCS_PROMPT, contexts="{}"),
-        _render(COMPETITOR_STRUCT_PROMPT, transcript="..."),
         _render(SYNTHESIS_PROMPT, specialist_outputs="{}", missing="[]"),
     ]
     for text in rendered:
@@ -43,9 +41,9 @@ def test_retry_feedback_injected():
     assert "too short" in text
 
 
-def test_competitor_system_prompt_is_string():
-    from templates.prompts.competitor_intelligence_agent import COMPETITOR_SYSTEM
-    text = COMPETITOR_SYSTEM.format(ticker="HDFCBANK.NS", company_name="HDFC Bank Ltd")
+def test_competitor_prompt_is_string():
+    from templates.prompts.competitor_intelligence_agent import COMPETITOR_PROMPT
+    text = COMPETITOR_PROMPT.format(ticker="HDFCBANK.NS", company_name="HDFC Bank Ltd")
     assert "3-5 true competitors" in text
 
 

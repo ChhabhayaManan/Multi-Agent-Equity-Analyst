@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class AgentInput(BaseModel):
-    """Common input every specialist agent receives."""
+    """input schema for specialist agents."""
 
     ticker: str = Field(
         description="yfinance ticker with exchange suffix",

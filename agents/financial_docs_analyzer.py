@@ -1,5 +1,4 @@
-"""Financial Docs Analyzer: last 12 concall transcripts + latest annual
-report -> Pinecone -> 5 fixed retrieval queries -> structured extraction."""
+"""An Agent, to fetch and analyze financial documents like concall transcripts and annual reports."""
 
 import json
 from contextvars import copy_context
@@ -27,10 +26,9 @@ QUERIES = (
 
 
 def run(ticker: str, company_name: str, retry_feedback: str = ""):
-    # Build the list of (url, document_id) to index: concall transcripts + the
-    # latest annual report. Each job is an independent PDF download+parse+embed
-    # +upsert, so they run concurrently instead of one-at-a-time (the old
-    # sequential loop was the dominant latency in this branch).
+    
+    # each job will have (document_id, url) to index, and we will run them concurrently
+    
     jobs = [(t["url"], f"concall-{t.get('date', 'unknown')}")
             for t in fetch_concall_transcripts(ticker)[:MAX_TRANSCRIPTS]]
     try:

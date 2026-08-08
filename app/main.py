@@ -1,12 +1,8 @@
-"""Home (index) page. `streamlit run app/main.py`.
-Search an NSE ticker -> generate report (live progress) -> render -> PDF.
-The Chatbot lives in app/pages/1_Chatbot.py."""
+
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# Streamlit only puts this script's own dir on sys.path, not repo root,
-# so absolute `app.*`/`tools.*`/`workflow.*` imports fail on deploy.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
@@ -15,38 +11,33 @@ from streamlit_searchbox import st_searchbox
 from app.pdf_builder import build_pdf
 from app.quote import get_quote
 from app.report_store import load_report, namespace_of, save_report
-from app.ui_helpers import (css_block, extract_citations, fmt_market_cap,
-                            fmt_num, move_chip_html, parse_price_moves, prose_html,
-                            section_note, split_bullets, split_labeled,
-                            strip_move_sentence)
+from app.sections import (render_competitors, render_docs, render_events,
+                          render_fundamentals, render_news, render_run_detail,
+                          render_sources)
+from app.ui_helpers import css_block, fmt_market_cap, fmt_num, status_icon
 from tools.market_tools import search_ticker
 from utils.tracing import init_tracing
 from workflow.graph import stream_report
 
 init_tracing()
 
-SECTION_ORDER = ["fundamentals", "competitors", "events", "news", "docs"]
-SECTION_TITLES = {
-    "fundamentals": "Company & Fundamentals", "competitors": "Competitive Landscape",
-    "events": "Event Timeline", "news": "News Analysis", "docs": "Financial Documents"}
+AGENT_TABS = {"fundamentals": "Company & Fundamentals",
+              "competitor": "Competitive Landscape",
+              "events": "Event Timeline", "news": "News Analysis",
+              "docs": "Financial Documents"}
 PROGRESS_ROWS = ["fundamentals", "competitor", "news", "events", "docs", "synthesis"]
-PROGRESS_LABELS = {
-    "fundamentals": "Company & Fundamentals", "competitor": "Competitive Landscape",
-    "news": "News Analysis", "events": "Event Timeline",
-    "docs": "Financial Documents", "synthesis": "Synthesis"}
-_ICONS = {"passed": "✅", "no_data": "📭", "failed_partial": "⚠️",
-          "running": "🔄", "pending": "⏳"}
+PROGRESS_LABELS = {**AGENT_TABS, "synthesis": "Synthesis"}
 
 st.set_page_config(page_title="Stock Research Platform",
                    page_icon="📈", layout="wide")
 st.markdown(css_block(), unsafe_allow_html=True)
-st.session_state.setdefault("sessions", {})   # ticker -> ChatSession (chatbot page)
 
 st.title("📈 Research an NSE Company")
 st.caption("NSE-only equity research. Read-only. Not investment advice.")
 st.divider()
 
 
+# searchbox lookup: top NSE ticker matches as label/value pairs
 def _search(query: str):
     if not query:
         return []
@@ -69,6 +60,7 @@ ticker, company_name = picked
 existing = load_report(ticker)
 
 
+# four-column quote strip: price, cap, p/e, 52-week range
 def _metric_tiles(symbol: str) -> None:
     """Live yfinance quote row. Silent no-op if the fetch fails."""
     q = get_quote(symbol)
@@ -85,102 +77,11 @@ def _metric_tiles(symbol: str) -> None:
     c4.metric("52-week range", rng)
 
 
-_DOC_ICONS = {
-    "guidance": "🎯", "target": "🎯", "outlook": "🎯",
-    "risk": "⚠️", "headwind": "⚠️",
-    "strategy": "🧭", "strateg": "🧭", "priorit": "🧭",
-    "refiner": "🏭", "expansion": "🏭", "capacity": "🏭", "manufactur": "🏭",
-    "financ": "💰", "margin": "💰",
-    "tone": "🗣️", "management": "🗣️",
-}
-
-
-def _doc_icon(label: str) -> str:
-    low = label.lower()
-    for key, icon in _DOC_ICONS.items():
-        if key in low:
-            return icon
-    return "•"
-
-
-def _sources_footer(cites: list) -> None:
-    if not cites:
-        return
-    body = " ".join(f"<span class='cite'>{i}</span>{c}"
-                    for i, c in enumerate(cites, 1))
-    st.markdown(f"<div class='srcfoot'>{body}</div>", unsafe_allow_html=True)
-
-
-def _render_bullets(text: str) -> None:
-    """Generic digestible render: citations -> chips, prose -> bullets + footer."""
-    clean, cites = extract_citations(text)
-    for b in split_bullets(clean):
-        st.markdown(f"<div class='bullet'>{prose_html(b, cites)}</div>",
-                    unsafe_allow_html=True)
-    _sources_footer(cites)
-
-
-def _render_events(text: str) -> None:
-    clean, cites = extract_citations(text)
-    intro, groups = split_labeled(clean)
-    if not groups:
-        _render_bullets(text)
-        return
-    if intro:
-        st.markdown(f"<div class='muted'>{prose_html(intro, cites)}</div>",
-                    unsafe_allow_html=True)
-    for date, body in groups:
-        d1, d5 = parse_price_moves(body)
-        summary = strip_move_sentence(body)
-        with st.container(border=True):
-            left, right = st.columns([1, 3.4])
-            left.markdown(f"<span class='evtdate'>{date}</span>",
-                          unsafe_allow_html=True)
-            with right:
-                if summary:
-                    st.markdown(prose_html(summary, cites),
-                                unsafe_allow_html=True)
-                chips = move_chip_html("1D", d1) + move_chip_html("5D", d5)
-                if chips:
-                    st.markdown(chips, unsafe_allow_html=True)
-    _sources_footer(cites)
-
-
-def _render_docs(text: str) -> None:
-    clean, cites = extract_citations(text)
-    intro, groups = split_labeled(clean)
-    if not groups:
-        _render_bullets(text)
-        return
-    if intro:
-        st.markdown(f"<div class='muted'>{prose_html(intro, cites)}</div>",
-                    unsafe_allow_html=True)
-    for label, body in groups:
-        with st.container(border=True):
-            st.markdown(f"<div class='grouptitle'>{_doc_icon(label)} {label}"
-                        "</div>", unsafe_allow_html=True)
-            for b in split_bullets(body):
-                st.markdown(f"<div class='bullet'>{prose_html(b, cites)}</div>",
-                            unsafe_allow_html=True)
-    _sources_footer(cites)
-
-
-_SECTION_RENDERERS = {"events": _render_events, "docs": _render_docs}
-
-
-def _render_section(key: str, content: str) -> None:
-    """Dispatch to a section-specific layout; fail soft to raw markdown."""
-    if not content or not content.strip() or "unavailable" in content.lower():
-        st.info("Data unavailable for this section.")
-        return
-    try:
-        _SECTION_RENDERERS.get(key, _render_bullets)(content)
-    except Exception:
-        st.markdown(content)   # never let a parse quirk hide the content
-
-
+# draw a saved report: summary, agent tabs, pdf and chat actions
 def _render_report(stored: dict) -> None:
     report = stored["report"]
+    specialists = stored.get("specialists", {})
+    runs = stored.get("runs", {})
     st.markdown(f"## {stored['company_name']} "
                 f"<span class='pill'>{stored['ticker']}</span>",
                 unsafe_allow_html=True)
@@ -188,24 +89,27 @@ def _render_report(stored: dict) -> None:
     _metric_tiles(ticker)
     with st.container(border=True):
         st.markdown("#### Executive Summary")
-        summary_clean, summary_cites = extract_citations(report.exec_summary)
-        st.markdown(prose_html(summary_clean, summary_cites),
-                    unsafe_allow_html=True)
-        _sources_footer(summary_cites)
-    tabs = st.tabs([SECTION_TITLES[k] for k in SECTION_ORDER])
-    for tab, key in zip(tabs, SECTION_ORDER):
+        st.markdown(report.exec_summary)
+    labels = [f"{status_icon((runs.get(name) or {}).get('status'))} {title}"
+              for name, title in AGENT_TABS.items()] + ["📚 Sources"]
+    tabs = st.tabs(labels)
+    for tab, name in zip(tabs, AGENT_TABS):
         with tab:
-            if section_note(report.missing_sections, key):
-                if key == "news":
-                    st.info("No recent news found for this stock.")
-                else:
-                    st.info("Data unavailable for this section.")
+            render_run_detail(runs.get(name))
+            obj = specialists.get(name)
+            if name == "fundamentals":
+                render_fundamentals(obj, stored["generated_at"])
+            elif name == "competitor":
+                render_competitors(obj, specialists.get("fundamentals"),
+                                   stored["ticker"], stored["company_name"])
+            elif name == "events":
+                render_events(obj)
+            elif name == "news":
+                render_news(obj)
             else:
-                _render_section(key, report.sections.get(key, ""))
-    if report.sources:
-        with st.expander(f"Sources ({len(report.sources)})"):
-            for s in report.sources:
-                st.markdown(f"- {s}")
+                render_docs(obj)
+    with tabs[-1]:
+        render_sources(specialists)
     act1, act2 = st.columns([1, 1])
     with act1:
         st.download_button(
@@ -218,6 +122,7 @@ def _render_report(stored: dict) -> None:
                      use_container_width=True)
 
 
+# run the graph with live per-agent progress, then save the result
 def _generate() -> None:
     with st.status("Generating report…", expanded=True) as status:
         rows = {name: st.empty() for name in PROGRESS_ROWS}
@@ -231,22 +136,27 @@ def _generate() -> None:
                 if name == "synthesis" and update["report"] is not None:
                     state = "passed"
                 rows[name].markdown(
-                    f"{_ICONS.get(state, '⏳')} {PROGRESS_LABELS[name]}")
+                    f"{status_icon(state)} {PROGRESS_LABELS[name]}")
             if update["done"]:
                 final = update
         if final and final["report"] is not None:
             status.update(label="Report ready", state="complete")
             generated_at = datetime.now().isoformat(timespec="seconds")
-            save_report(ticker, company_name, final["report"], generated_at)
+            save_report(ticker, company_name, final["report"], generated_at,
+                        final["specialists"], final["runs"])
             st.session_state["_fresh_report"] = {
                 "ticker": namespace_of(ticker), "company_name": company_name,
-                "generated_at": generated_at, "report": final["report"]}
+                "generated_at": generated_at, "report": final["report"],
+                "specialists": final["specialists"], "runs": final["runs"]}
         else:
             status.update(label="No report produced", state="error")
 
 
 button_label = "♻️ Regenerate" if existing else "🚀 Generate report"
-if existing:
+if existing and existing.get("legacy"):
+    st.warning("This report was saved in an older format that did not keep the "
+               "detailed agent data. Regenerate it to see the full breakdown.")
+elif existing:
     _render_report(existing)
 else:
     st.info("No saved report for this ticker yet.")
