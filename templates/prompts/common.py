@@ -1,6 +1,4 @@
-"""Shared prompt fragments. Composed (string-concatenated) into every
-specialist system prompt. Both fragments use {ticker}/{company_name}
-placeholders, resolved when the enclosing ChatPromptTemplate renders."""
+#common system prompt for all agents
 
 COMMON_HEADER = """You are part of an equity research system for Indian stocks (NSE/BSE only).
 Rules that apply to everything you write:

@@ -9,13 +9,10 @@ logger = get_logger(__name__)
 
 _EXCHANGE_NAMES = {"NSI": "NSE", "BSE": "BSE"}
 
+# yfinance library is used for these tools
 
 def search_ticker(query: str) -> List[dict]:
-    # yf.Search ranks by global relevance and frequently omits the NSE/BSE
-    # listing entirely for common Indian company names (e.g. "Infosys",
-    # "TCS", "HDFC Bank") in favor of NYSE ADRs or unrelated tickers.
-    # yf.Lookup returns every matching symbol unranked, so the NSE/BSE
-    # listing is reliably present.
+    #search auto completion function
     df = yf.Lookup(query).get_stock(count=25)
     results = [
         {
@@ -30,7 +27,7 @@ def search_ticker(query: str) -> List[dict]:
     return results
 
 
-@traceable(name="get_stock_info")
+@traceable(name="get_stock_info") #stock basic information
 def get_stock_info(ticker: str) -> dict:
     info = yf.Ticker(ticker).info
     return {
@@ -41,7 +38,7 @@ def get_stock_info(ticker: str) -> dict:
     }
 
 
-@traceable(name="get_price_history")
+@traceable(name="get_price_history") #stock price history 
 def get_price_history(ticker: str, period: str = "1mo") -> pd.DataFrame:
     return yf.Ticker(ticker).history(period=period)
 
@@ -60,19 +57,13 @@ def get_fundamentals(ticker: str) -> dict:
 
 
 def get_live_price(ticker: str) -> float:
-    # fast_info key is camelCase "lastPrice" in yfinance 1.5.1
     return float(yf.Ticker(ticker).fast_info["lastPrice"])
 
 
 @traceable(name="search_sector_peers")
 def search_sector_peers(sector: str, mktcap_range: Tuple[float, float]) -> List[str]:
-    """Return NSE tickers in `sector` whose market cap (INR) falls in mktcap_range.
-
-    Uses yf.Sector(key, region="IN").top_companies, which does return Indian
-    listings (mix of .NS and .BO symbols). LIMITATION: Yahoo only exposes the
-    sector's largest companies by market weight (~a few dozen), so smaller NSE
-    names are missing and results may vary over time. top_companies carries no
-    market-cap column, so caps are fetched per candidate via fast_info.
+    """
+    competitors in the same field or sector
     """
     key = sector.lower().replace(" ", "-")
     try:
@@ -97,11 +88,8 @@ def search_sector_peers(sector: str, mktcap_range: Tuple[float, float]) -> List[
 
 
 def price_move_around(ticker: str, date: str) -> dict:
-    """% price change around an event date, from daily closes.
-
-    pct_1d: close on the event day (or nearest next trading day) vs the
-    previous trading close. pct_5d: close 5 trading days after the event day
-    vs that same previous close. None when history doesn't cover the date.
+    """
+    % price change around an event date, from daily closes.
     """
     out = {"pct_1d": None, "pct_5d": None}
     df = get_price_history(ticker, period="1y")

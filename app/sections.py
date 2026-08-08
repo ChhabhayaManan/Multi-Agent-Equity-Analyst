@@ -1,34 +1,27 @@
-"""Streamlit renderers, one per report tab. Every layout decision lives here;
-all data shaping lives in app.ui_helpers so it stays unit-testable."""
+"""Streamlit renderers, one per report tab."""
 import streamlit as st
 
-from app.ui_helpers import (DASH, badge_html, event_rows, fmt_market_cap,
-                            fmt_num, group_sources, guidance_rows, kv_rows,
-                            move_chip_html, news_rows, peer_rows)
+from app.ui_helpers import (DASH, HOLDING_LABELS, PRICE_LABELS,
+                            VALUATION_LABELS, badge_html, event_rows,
+                            fmt_market_cap, fmt_num, group_sources,
+                            guidance_rows, kv_rows, move_chip_html, news_rows,
+                            peer_rows)
 
 _PCT = st.column_config.NumberColumn(format="%.2f%%")
 
-_VALUATION_LABELS = [("pe", "P/E", ""), ("pb", "P/B", ""), ("roe", "ROE", "%"),
-                     ("roce", "ROCE", "%"), ("debt_equity", "Debt / Equity", ""),
-                     ("dividend_yield", "Dividend yield", "%")]
-_PRICE_LABELS = [("price", "Price", "₹"), ("high_52w", "52-week high", "₹"),
-                 ("low_52w", "52-week low", "₹"), ("ret_1m", "1-month return", "%"),
-                 ("ret_6m", "6-month return", "%"), ("ret_1y", "1-year return", "%"),
-                 ("mktcap_cr", "Market cap", "cr")]
-_HOLDING_LABELS = [("promoter", "Promoter", "%"), ("fii", "FII", "%"),
-                   ("dii", "DII", "%"), ("public", "Public", "%")]
 
-
+# shared dataframe helper: skips rendering when there are no rows
 def _table(rows: list, column_config: dict = None) -> None:
-    """st.dataframe with sensible defaults; silent no-op on empty rows."""
+
     if not rows:
         return
     st.dataframe(rows, use_container_width=True, hide_index=True,
                  column_config=column_config or {})
 
 
+# collapsed expander with per-agent run stats and warnings
 def render_run_detail(run: dict) -> None:
-    """Collapsed agent diagnostics: status, attempts, items fetched, reasons."""
+
     if not run:
         return
     with st.expander("Run detail", expanded=False):
@@ -42,6 +35,7 @@ def render_run_detail(run: dict) -> None:
             st.caption(f"⚠️ {reason}")
 
 
+# Fundamentals tab: profile chips, summary, valuation, price, shareholding
 def render_fundamentals(f, generated_at: str) -> None:
     if f is None:
         st.info("Data unavailable for this section.")
@@ -55,19 +49,20 @@ def render_fundamentals(f, generated_at: str) -> None:
     if profile.get("description"):
         st.caption(profile["description"])
     st.markdown("#### Valuation")
-    _table(kv_rows(f.valuation, _VALUATION_LABELS))
+    _table(kv_rows(f.valuation, VALUATION_LABELS))
     st.markdown("#### Price snapshot")
     st.caption(f"As captured at generation · {generated_at}")
-    _table(kv_rows(f.price_snapshot, _PRICE_LABELS))
+    _table(kv_rows(f.price_snapshot, PRICE_LABELS))
     st.markdown("#### Shareholding")
-    _table(kv_rows(f.shareholding, _HOLDING_LABELS))
+    _table(kv_rows(f.shareholding, HOLDING_LABELS))
 
 
+# Competitors tab: standing badge, peer table, then a card per peer
 def render_competitors(c, fundamentals, ticker: str, company_name: str) -> None:
     if c is None:
         st.info("Data unavailable for this section.")
         return
-    st.markdown(f"Overall standing: {badge_html(c.overall_standing, 'standing')}",
+    st.markdown(f"Overall standing: {badge_html(c.overall_standing)}",
                 unsafe_allow_html=True)
     st.markdown(c.comparison_summary)
     st.markdown("#### Peer comparison")
@@ -85,8 +80,8 @@ def render_competitors(c, fundamentals, ticker: str, company_name: str) -> None:
                 f"<div class='cardtitle'>{p.name} "
                 f"<span class='pill'>{p.ticker}</span></div>"
                 f"<div class='cardmeta'>Competition "
-                f"{badge_html(p.competition_intensity, 'intensity')} · Target "
-                f"{badge_html(p.target_standing, 'standing')}</div>",
+                f"{badge_html(p.competition_intensity)} · Target "
+                f"{badge_html(p.target_standing)}</div>",
                 unsafe_allow_html=True)
             st.markdown(p.reason_for_inclusion)
             m = p.metrics or {}
@@ -99,6 +94,7 @@ def render_competitors(c, fundamentals, ticker: str, company_name: str) -> None:
                 unsafe_allow_html=True)
 
 
+# Events tab: highlights, timeline table, then a card per event
 def render_events(e) -> None:
     if e is None:
         st.info("Data unavailable for this section.")
@@ -117,8 +113,8 @@ def render_events(e) -> None:
         with st.container(border=True):
             st.markdown(
                 f"<span class='evtdate'>{ev.date}</span> "
-                f"{badge_html(ev.type, 'type')} "
-                f"{badge_html(ev.significance, 'significance')}",
+                f"{badge_html(ev.type)} "
+                f"{badge_html(ev.significance)}",
                 unsafe_allow_html=True)
             st.markdown(f"**{ev.summary}**")
             st.markdown(f"<div class='bullet'>{ev.what_it_meant}</div>"
@@ -132,12 +128,13 @@ def render_events(e) -> None:
                 st.caption(ev.filing_ref)
 
 
+# News tab: sentiment badge, narrative, article table and cards
 def render_news(n) -> None:
     if n is None:
         st.info("Data unavailable for this section.")
         return
     st.markdown(f"Overall sentiment: "
-                f"{badge_html(n.overall_sentiment, 'sentiment')}",
+                f"{badge_html(n.overall_sentiment)}",
                 unsafe_allow_html=True)
     st.markdown(n.narrative)
     if not n.items:
@@ -152,7 +149,7 @@ def render_news(n) -> None:
             st.markdown(f"<div class='cardtitle'>"
                         f"<a href='{it.source_url}' target='_blank'>{it.title}</a>"
                         f"</div><div class='cardmeta'>{it.date} · "
-                        f"{badge_html(it.sentiment, 'sentiment')} "
+                        f"{badge_html(it.sentiment)} "
                         f"<span class='chip'>{it.sentiment_score:+.2f}</span>"
                         f"</div>", unsafe_allow_html=True)
             st.markdown(it.summary)
@@ -161,11 +158,12 @@ def render_news(n) -> None:
                         f"{it.sector_impact}</div>", unsafe_allow_html=True)
 
 
+# Financial Documents tab: management tone, guidance, risks, strategy chips
 def render_docs(d) -> None:
     if d is None:
         st.info("Data unavailable for this section.")
         return
-    st.markdown(f"Management tone: {badge_html(d.management_tone, 'tone')}",
+    st.markdown(f"Management tone: {badge_html(d.management_tone)}",
                 unsafe_allow_html=True)
     st.caption(d.tone_trend)
     st.markdown(d.narrative)
@@ -195,6 +193,7 @@ def render_docs(d) -> None:
                     unsafe_allow_html=True)
 
 
+# Sources tab: one bordered group per source kind, links made clickable
 def render_sources(specialists: dict) -> None:
     groups = group_sources(specialists)
     if not groups:

@@ -1,6 +1,4 @@
-"""Fundamentals agent: tool-call + one LLM call for the summary.
-All numeric fields are overwritten from tool data after the LLM call -
-the LLM's numbers never ship."""
+"""Agent to gather and process fundamental informations about the stock"""
 
 import json
 
@@ -16,11 +14,12 @@ logger = get_logger(__name__)
 
 
 def _close(closes, position: int):
-    """Close as a float, or None when the bar is missing (yfinance NaN)."""
-    return scrub_nan(float(closes.iloc[position]))
+    """fetches close price at that position, if position = -1 means last day's close price"""
+    return scrub_nan(float(closes.iloc[position])) # also converts to float and scrubs NaN to None
 
 
 def _pct(closes, trading_days_back: int):
+    """fetches % price change from that many trading days back to last day"""
     if len(closes) <= trading_days_back:
         return None
     prev = _close(closes, -1 - trading_days_back)
@@ -31,6 +30,7 @@ def _pct(closes, trading_days_back: int):
 
 
 def _snapshot(hist, market_cap) -> dict:
+    """creates price snapshot"""
     if hist.empty or "Close" not in hist.columns:
         return {k: None for k in
                 ("price", "high_52w", "low_52w", "ret_1m", "ret_6m", "ret_1y", "mktcap_cr")}
@@ -49,6 +49,8 @@ def _snapshot(hist, market_cap) -> dict:
 
 
 def run(ticker: str, company_name: str, retry_feedback: str = ""):
+
+    # get all fundamental details
     info = get_stock_info(ticker)
     fund = get_fundamentals(ticker)
     hist = get_price_history(ticker, period="1y")
@@ -72,12 +74,12 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
         "shareholding_quarter": share.get("quarter"),
     }, indent=2, default=str, allow_nan=False)
 
+
     llm = get_llm(FundamentalsOutput)
     out = llm.invoke(FUNDAMENTALS_PROMPT.invoke({
         "ticker": ticker, "company_name": company_name,
         "context": context, "retry_feedback": retry_feedback}))
 
-    # Belt and braces: numbers come from tools, whatever the LLM returned.
     out = out.model_copy(update={
         "company_profile": company_profile, "valuation": valuation,
         "price_snapshot": price_snapshot, "shareholding": shareholding})

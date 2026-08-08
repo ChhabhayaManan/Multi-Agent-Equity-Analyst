@@ -1,13 +1,11 @@
-"""Research chatbot session: input guardrail -> create_agent ReAct loop ->
-output guardrail (grounded on this turn's tool outputs) -> turn summary."""
+"""Research chatbot"""
 
 import asyncio
 import json
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import ToolMessage
-
 from chatbot.chatbot_tools import build_local_tools, load_alphavantage_tools
 from chatbot.memory import ConversationMemory, summarize_turn
 from guard.input_guardrail import InputGuardrail
@@ -57,13 +55,13 @@ class StatusCallbackHandler(BaseCallbackHandler):
         else:
             self._emit(STATUS_LINES.get(name, DEFAULT_TOOL_LINE))
 
-
+# ReAct agent with local tools and MCP tools
 def _create_agent(system_prompt: str, tools: list):
     from langchain.agents import create_agent
     return create_agent(model=get_chat_model(), tools=tools,
                         system_prompt=system_prompt)
 
-
+# Chat session for a single ticker, with memory and guardrails
 class ChatSession:
     def __init__(self, ticker: str, company_name: str,
                  status_callback: Optional[Callable[[str], None]] = None):
@@ -78,15 +76,15 @@ class ChatSession:
         self._input_guard = InputGuardrail()
         self._output_guard = OutputGuardrail()
 
-        local_tools = build_local_tools(ticker, company_name)
+        local_tools = build_local_tools(ticker)
         av_tools = load_alphavantage_tools()
         self._callback_handler = StatusCallbackHandler(
             self._status, {t.name for t in av_tools})
-        system = CHATBOT_SYSTEM.format(ticker=ticker, company_name=company_name)
-        self._agent = _create_agent(system, local_tools + av_tools)
+        system = CHATBOT_SYSTEM.format(ticker=ticker, company_name=company_name) # prompt with ticker and company name
+        self._agent = _create_agent(system, local_tools + av_tools) # created Agent
 
     @traceable(run_type="chain", name="chatbot_turn")
-    def ask(self, user_message: str) -> ChatbotResponse:
+    def ask(self, user_message: str) -> ChatbotResponse: 
         self._status(STATUS_LINES["input_guard"])
         gate = self._input_guard.validate(
             user_message, self.ticker, self.company_name,
@@ -124,7 +122,7 @@ class ChatSession:
                 b.get("text", "") if isinstance(b, dict) else str(b)
                 for b in final_text)
 
-        grounding, charts = [], []
+        grounding, charts, sources = [], [], []
         for m in messages:
             if isinstance(m, ToolMessage):
                 content = m.content if isinstance(m.content, str) else str(m.content)
@@ -135,15 +133,12 @@ class ChatSession:
                         charts.append(data["chart_path"])
                 except ValueError:
                     pass
-
-        sources: List[str] = []
-        for m in messages:
             for tc in getattr(m, "tool_calls", None) or []:
                 if tc["name"] not in sources:
                     sources.append(tc["name"])
 
         self._status(STATUS_LINES["output_guard"])
-        verdict = self._output_guard.validate(final_text, grounding)
+        verdict = self._output_guard.validate(final_text, grounding) # check output guardrail
         answer = verdict.cleaned_text
 
         summary = summarize_turn(user_message, answer)

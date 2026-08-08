@@ -13,7 +13,7 @@ from utils.helpers import get_logger, load_config
 logger = get_logger(__name__)
 
 GROQ_MODELS = ("llama-3.3-70b-versatile", "openai/gpt-oss-120b")
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
 GROQ_TIMEOUT_S = 15
 
 
@@ -31,8 +31,7 @@ def _gemini():
 
 
 def _is_too_large(exc: Exception) -> bool:
-    """Prompt exceeds the bucket or context window. Must be tested before
-    _is_rate_limit: Groq sends 413 with body code 'rate_limit_exceeded'."""
+    """True when the request is too large for the model to handle."""
     text = str(exc).lower()
     return ("request too large" in text or "reduce your message size" in text
             or "context_length_exceeded" in text
@@ -40,7 +39,7 @@ def _is_too_large(exc: Exception) -> bool:
             or getattr(exc, "status_code", None) == 413)
 
 
-def _is_rate_limit(exc: Exception) -> bool:
+def _is_rate_limit(exc: Exception) -> bool: #function to check if the error is about the rate limit
     text = str(exc).lower()
     return ("429" in text or "rate limit" in text or "rate_limit" in text
             or "quota" in text or "over capacity" in text

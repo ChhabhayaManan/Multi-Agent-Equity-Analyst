@@ -1,5 +1,4 @@
-"""Blocking CLI for the research chatbot. The input() loop guarantees the
-user cannot submit a second question until the previous answer prints."""
+"""a simple command-line interface to the stock research chatbot. for testing and debugging."""
 
 import sys
 import webbrowser
@@ -8,7 +7,7 @@ from pathlib import Path
 from chatbot.chatbot_agent import ChatSession
 from tools.market_tools import search_ticker
 
-
+# a function to pick a ticker from user input, returning the ticker and company name
 def _pick_ticker() -> tuple:
     query = input("Company or ticker: ").strip()
     if not query:

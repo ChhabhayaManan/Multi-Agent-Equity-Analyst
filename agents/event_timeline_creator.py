@@ -1,6 +1,4 @@
-"""Event Timeline agent: fetch 90d of announcements, attach tool-computed
-price moves, LLM classifies + interprets. Price moves are re-applied from
-the tool data after the LLM call, keyed by event date."""
+"""Event Timeline Agent"""
 
 import json
 
@@ -16,7 +14,7 @@ logger = get_logger(__name__)
 
 
 def run(ticker: str, company_name: str, retry_feedback: str = ""):
-    announcements = fetch_bse_announcements(ticker, days=90)
+    announcements = fetch_bse_announcements(ticker, days=90) #fetch the announcements
     fetch_count = len(announcements)
 
     moves_by_date: dict[str, dict] = {}
@@ -42,11 +40,11 @@ def run(ticker: str, company_name: str, retry_feedback: str = ""):
         "ticker": ticker, "company_name": company_name,
         "announcements": payload, "retry_feedback": retry_feedback}))
 
-    # Belt and braces: price moves come from the tool, keyed by date.
-    fixed = []
-    for event in out.events:
-        moves = moves_by_date.get(event.date, {"pct_1d": None, "pct_5d": None})
-        fixed.append(event.model_copy(update={
-            "price_move_1d": moves["pct_1d"], "price_move_5d": moves["pct_5d"]}))
-    out = out.model_copy(update={"events": fixed})
+    out = out.model_copy(update={"events": [
+        event.model_copy(update={
+            "price_move_1d": (m := moves_by_date.get(event.date, {})).get("pct_1d"),
+            "price_move_5d": m.get("pct_5d"),
+        })
+        for event in out.events
+    ]})
     return out, fetch_count

@@ -1,11 +1,10 @@
-"""Competitor Intelligence agent: langchain `create_agent` ReAct loop over
-market tools with `response_format=CompetitorOutput` for structured output."""
+"""a ReAct competitive intelligence agent, which can think and use the tools to get the output"""
 
 import json
 
 from langchain_core.tools import tool
 
-from templates.prompts.competitor_intelligence_agent import COMPETITOR_SYSTEM
+from templates.prompts.competitor_intelligence_agent import COMPETITOR_PROMPT
 from templates.schemas.outputs import CompetitorOutput
 from tools import market_tools
 from tools.pinecone_tools import store_to_pinecone
@@ -23,25 +22,25 @@ def _dump(payload) -> str:
 
 @tool
 def get_stock_info(ticker: str) -> str:
-    """Sector, industry, market cap and description for a ticker (e.g. HDFCBANK.NS)."""
+    """Sector, industry, market cap and description for a ticker."""
     return _dump(market_tools.get_stock_info(ticker))
 
 
 @tool
 def search_sector_peers(sector: str, mktcap_low: float, mktcap_high: float) -> str:
-    """NSE tickers in `sector` with market cap (INR) between mktcap_low and mktcap_high."""
+    """Tool to search sector peers for ticker"""
     return _dump(market_tools.search_sector_peers(sector, (mktcap_low, mktcap_high)))
 
 
 @tool
 def get_fundamentals(ticker: str) -> str:
-    """P/E, P/B, ROE, debt/equity, revenue and dividend yield for a ticker."""
+    """Tool to get P/E, P/B, ROE, debt/equity, revenue and dividend yield for a ticker."""
     return _dump(market_tools.get_fundamentals(ticker))
 
 
 @tool
 def get_price_returns(ticker: str) -> str:
-    """1-month, 3-month and 6-month % price returns for a ticker."""
+    """Tool to get 1-month, 3-month and 6-month % price returns for a ticker."""
     df = market_tools.get_price_history(ticker, period="6mo")
     if df.empty or "Close" not in df.columns:
         return _dump({"ret_1m": None, "ret_3m": None, "ret_6m": None})
@@ -62,7 +61,7 @@ def get_price_returns(ticker: str) -> str:
 
 _TOOLS = [get_stock_info, search_sector_peers, get_fundamentals, get_price_returns]
 
-
+# fn to build the agent from given list of tools, respose format and system prompt
 def _build_agent(system_prompt: str):
     from langchain.agents import create_agent
     return create_agent(model=get_chat_model(), tools=_TOOLS,
@@ -71,7 +70,7 @@ def _build_agent(system_prompt: str):
 
 
 def run(ticker: str, company_name: str, retry_feedback: str = ""):
-    system = COMPETITOR_SYSTEM.format(ticker=ticker, company_name=company_name)
+    system = COMPETITOR_PROMPT.format(ticker=ticker, company_name=company_name)
     task = f"Analyze competitors for {ticker} ({company_name})."
     if retry_feedback:
         task += f"\n{retry_feedback}"

@@ -27,8 +27,7 @@ def load_config() -> dict:
 
 
 def scrub_nan(value):
-    """Recursively replace NaN/inf with None. json.dumps writes NaN as a bare
-    token, which is invalid JSON and makes Groq reject the generation."""
+    """Recursively replace NaN/inf with None. to avoid JSON serialization errors."""
     if isinstance(value, dict):
         return {k: scrub_nan(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -52,12 +51,10 @@ def get_logger(name: str) -> logging.Logger:
         )
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
-        # Third-party libs (guardrails et al.) attach root handlers; without
-        # this every record prints twice in the CLI.
         logger.propagate = False
     return logger
 
-
+# provides a decorator for caching function results to disk with a specified time-to-live (TTL) in hours.
 def disk_cache(ttl_hours: float = 24):
     def decorator(func):
         @wraps(func)

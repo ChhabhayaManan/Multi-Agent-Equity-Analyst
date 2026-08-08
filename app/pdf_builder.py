@@ -1,23 +1,14 @@
-"""Render a stored report to a self-contained HTML doc, then to PDF bytes.
-Tables only — xhtml2pdf has no flex/grid support. Row shaping is shared with
-the Streamlit page via app.ui_helpers so the two formats cannot drift."""
+"""Render a stored report to a self-contained HTML doc, then to PDF bytes."""
+
 import io
 from html import escape
 
 from xhtml2pdf import pisa
 
-from app.ui_helpers import (DASH, event_rows, fmt_num, group_sources,
-                            guidance_rows, kv_rows, news_rows, peer_rows)
-
-_VALUATION_LABELS = [("pe", "P/E", ""), ("pb", "P/B", ""), ("roe", "ROE", "%"),
-                     ("roce", "ROCE", "%"), ("debt_equity", "Debt / Equity", ""),
-                     ("dividend_yield", "Dividend yield", "%")]
-_PRICE_LABELS = [("price", "Price", "₹"), ("high_52w", "52-week high", "₹"),
-                 ("low_52w", "52-week low", "₹"), ("ret_1m", "1-month return", "%"),
-                 ("ret_6m", "6-month return", "%"), ("ret_1y", "1-year return", "%"),
-                 ("mktcap_cr", "Market cap", "cr")]
-_HOLDING_LABELS = [("promoter", "Promoter", "%"), ("fii", "FII", "%"),
-                   ("dii", "DII", "%"), ("public", "Public", "%")]
+from app.ui_helpers import (DASH, HOLDING_LABELS, PRICE_LABELS,
+                            VALUATION_LABELS, event_rows, fmt_num,
+                            group_sources, guidance_rows, kv_rows, news_rows,
+                            peer_rows)
 
 _CSS = """
 body { font-family: Helvetica, Arial, sans-serif; font-size: 10px; color: #1a1a1a; }
@@ -34,6 +25,7 @@ td { padding: 3px 5px; border-bottom: 1px solid #e2e6ee; font-size: 9px; }
 """
 
 
+# one table cell: dash for blanks, 2dp for floats, escaped otherwise
 def _cell(value) -> str:
     if value is None or value == "":
         return DASH
@@ -42,6 +34,7 @@ def _cell(value) -> str:
     return escape(str(value))
 
 
+# rows -> HTML table, headers taken from the first row
 def _table(rows: list) -> str:
     """list[dict] -> HTML table. Empty rows render nothing."""
     if not rows:
@@ -54,11 +47,13 @@ def _table(rows: list) -> str:
     return f"<table><tr>{head}</tr>{body}</table>"
 
 
+# placeholder block for a specialist that produced nothing
 def _missing(title: str) -> str:
     return (f"<h2>{title}</h2>"
             "<p class='missing'>Data unavailable for this section.</p>")
 
 
+# Company & Fundamentals section: profile text + 3 metric tables
 def _fundamentals(f, generated_at: str) -> str:
     if f is None:
         return _missing("Company &amp; Fundamentals")
@@ -71,14 +66,15 @@ def _fundamentals(f, generated_at: str) -> str:
         out.append(f"<p class='label'>{meta}</p>")
     if profile.get("description"):
         out.append(f"<p>{escape(str(profile['description']))}</p>")
-    out.append("<h3>Valuation</h3>" + _table(kv_rows(f.valuation, _VALUATION_LABELS)))
+    out.append("<h3>Valuation</h3>" + _table(kv_rows(f.valuation, VALUATION_LABELS)))
     out.append(f"<h3>Price snapshot (as of {escape(generated_at)})</h3>"
-               + _table(kv_rows(f.price_snapshot, _PRICE_LABELS)))
+               + _table(kv_rows(f.price_snapshot, PRICE_LABELS)))
     out.append("<h3>Shareholding</h3>"
-               + _table(kv_rows(f.shareholding, _HOLDING_LABELS)))
+               + _table(kv_rows(f.shareholding, HOLDING_LABELS)))
     return "".join(out)
 
 
+# Competitive Landscape section: peer table + a paragraph per peer
 def _competitors(c, fundamentals, ticker: str, company_name: str) -> str:
     if c is None:
         return _missing("Competitive Landscape")
@@ -94,6 +90,7 @@ def _competitors(c, fundamentals, ticker: str, company_name: str) -> str:
     return "".join(out)
 
 
+# Event Timeline section: highlights, table, then each event expanded
 def _events(e) -> str:
     if e is None:
         return _missing("Event Timeline")
@@ -109,6 +106,7 @@ def _events(e) -> str:
     return "".join(out)
 
 
+# News Analysis section: sentiment, narrative, article table + details
 def _news(n) -> str:
     if n is None:
         return _missing("News Analysis")
@@ -123,6 +121,7 @@ def _news(n) -> str:
     return "".join(out)
 
 
+# Financial Documents section: tone, guidance, risks, strategy
 def _docs(d) -> str:
     if d is None:
         return _missing("Financial Documents")
@@ -142,6 +141,7 @@ def _docs(d) -> str:
     return "".join(out)
 
 
+# Sources appendix: grouped reference lists, omitted when empty
 def _sources(specialists: dict) -> str:
     groups = group_sources(specialists)
     if not groups:
@@ -153,6 +153,7 @@ def _sources(specialists: dict) -> str:
     return f"<div class='sources'><h2>Sources</h2>{''.join(blocks)}</div>"
 
 
+# stitch every section into one styled HTML document
 def build_html(stored: dict) -> str:
     report = stored["report"]
     s = stored.get("specialists") or {}
@@ -173,6 +174,7 @@ def build_html(stored: dict) -> str:
     return f"<html><head><style>{_CSS}</style></head><body>{body}</body></html>"
 
 
+# render that HTML to PDF bytes for the download button
 def build_pdf(stored: dict) -> bytes:
     html = build_html(stored)
     buf = io.BytesIO()

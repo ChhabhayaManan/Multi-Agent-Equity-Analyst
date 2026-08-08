@@ -1,7 +1,4 @@
-"""Report Synthesis: pure aggregation, one LLM call, no tools.
-missing_sections and sources are computed in code and overwrite whatever
-the LLM returned for those fields. build_index_text serializes the whole
-run for the chatbot's retrievable report document."""
+"""An Agent that synthesis the main report at the end."""
 
 import json
 
@@ -20,26 +17,24 @@ CAPS = {"peers": 5, "news": 10, "events": 10,
 MISSING = "MISSING - data unavailable"
 _SIGNIFICANCE = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
-
+# truncate over 400 chars, add ...
 def _clip(text):
     if not isinstance(text, str) or len(text) <= MAX_TEXT_CHARS:
         return text
     return text[:MAX_TEXT_CHARS].rstrip() + "..."
 
-
+#sorts news by absolute sentiment score, events by significance, and returns the top cap items
 def _top_news(items, cap):
-    """Strongest signal first; sorted() is stable, so ties keep agent order."""
     return sorted(items, key=lambda it: -abs(it.sentiment_score))[:cap]
 
-
+#sorts events by significance, and returns the top cap items
 def _top_events(events, cap):
     return sorted(events, key=lambda e: _SIGNIFICANCE.get(e.significance, 3))[:cap]
 
 
 def _project(name: str, obj, caps: dict) -> dict:
-    """Only what an exec summary can use. Quotes, source URLs and per-peer
-    metric dicts are dropped - the report renders those from the structured
-    outputs directly, and together they were most of a 17k-token payload."""
+    """compressor for specific agent outputs."""
+
     if name == "fundamentals":
         return {"summary": _clip(obj.summary),
                 "sector": obj.company_profile.get("sector"),
@@ -80,9 +75,8 @@ def _project(name: str, obj, caps: dict) -> dict:
 
 
 def _payload(state: dict) -> str:
-    """Serialize the specialists under a char budget. A request larger than
-    the model's per-minute bucket is a hard 413 - the free tier tops out at
-    12k TPM on 70b - so caps halve until it fits."""
+    """serialize the specialist outputs into a single JSON blob, truncating each section"""
+
     caps = dict(CAPS)
     while True:
         outputs = {n: (MISSING if _is_empty(n, state.get(n))
@@ -99,8 +93,8 @@ def _payload(state: dict) -> str:
 
 
 def _is_empty(name: str, obj) -> bool:
-    """True when a specialist genuinely produced no data (vs. failed a rule
-    but still returned content). Only genuinely-empty sections get blanked."""
+    """True when a specialist genuinely produced no data."""
+
     if obj is None:
         return True
     if name == "competitor":
@@ -115,6 +109,8 @@ def _is_empty(name: str, obj) -> bool:
 
 
 def _collect_sources(state: dict) -> list[str]:
+    """collect all source URLs from the specialist outputs, deduplicated"""
+
     sources: list[str] = []
     news = state.get("news")
     if news:
@@ -134,6 +130,8 @@ def _collect_sources(state: dict) -> list[str]:
 
 
 def run(state: dict, retry_feedback: str = "") -> ReportOutput:
+    """adds missing sections and sources to the final report, and returns the LLM output"""
+
     missing = [n for n in AGENTS if _is_empty(n, state.get(n))]
     llm = get_llm(ReportOutput)
     report = llm.invoke(SYNTHESIS_PROMPT.invoke({
@@ -146,8 +144,8 @@ def run(state: dict, retry_feedback: str = "") -> ReportOutput:
 
 
 def build_index_text(state: dict, report: ReportOutput) -> str:
-    """Plain-text serialization of the whole report for the Pinecone
-    'final-report' doc. Deterministic, no LLM: the chatbot retrieves this."""
+    """builds a text blob for indexing in Pinecone, with all the specialist outputs and the final report summary"""
+    
     parts = [f"EXECUTIVE SUMMARY\n{report.exec_summary}"]
 
     f = state.get("fundamentals")

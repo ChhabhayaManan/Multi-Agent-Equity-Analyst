@@ -9,29 +9,29 @@ def _reload():
 
 
 def test_init_tracing_noop_without_key(monkeypatch):
-    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
     monkeypatch.setattr("utils.tracing.load_dotenv", lambda *a, **k: None)
     t = _reload()
     monkeypatch.setattr(t, "load_dotenv", lambda *a, **k: None)
-    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
-    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     assert t.init_tracing() is False
-    assert os_env_missing("LANGCHAIN_TRACING_V2")
+    assert os_env_missing("LANGSMITH_TRACING")
 
 
 def test_init_tracing_enables_with_key(monkeypatch):
     t = _reload()
     monkeypatch.setattr(t, "load_dotenv", lambda *a, **k: None)
-    monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "fake-key")
     # setenv (not delenv) so monkeypatch records the original and restores it
     # on teardown; delenv on an already-absent var registers no restoration,
-    # letting init_tracing's os.environ["LANGCHAIN_TRACING_V2"]="true" leak
+    # letting init_tracing's os.environ["LANGSMITH_TRACING"]="true" leak
     # process-wide and trip a real LangSmith POST in a later @traceable test.
-    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
     assert t.init_tracing() is True
     import os
-    assert os.environ["LANGCHAIN_TRACING_V2"] == "true"
-    assert os.environ["LANGCHAIN_PROJECT"] == "stock-research"
+    assert os.environ["LANGSMITH_TRACING"] == "true"
+    assert os.environ["LANGSMITH_PROJECT"] == "stock-research"
 
 
 def test_set_run_metadata_noop_when_no_run(monkeypatch):

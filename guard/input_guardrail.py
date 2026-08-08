@@ -21,22 +21,15 @@ from utils.helpers import get_logger, load_config
 
 logger = get_logger(__name__)
 
-# Presidio warns per analyze() call about requested entities whose recognizers
-# aren't registered for "en" (IN_PAN etc.) and at init about non-en
-# recognizers — pure noise for this use; detection behavior is unchanged.
 logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
-# GuardrailsAI warns every sync call that it fell back from async validation —
-# expected in this synchronous pipeline.
+
 warnings.filterwarnings(
     "ignore", message="Could not obtain an event loop", category=UserWarning
 )
 
 JUDGE_MODEL = "llama-3.1-8b-instant"
 
-# Restricted to actually privacy-sensitive identifiers. Presidio's unfiltered
-# default (all entity types) flags DATE_TIME/LOCATION/PERSON too, which
-# false-positives constantly on ordinary stock questions ("last quarter",
-# "Waaree Energies").
+
 PII_ENTITIES = [
     "EMAIL_ADDRESS",
     "PHONE_NUMBER",
@@ -98,6 +91,7 @@ def _call_judge_llm(prompt: str) -> dict:
 class InputGuardrail:
     def __init__(self):
         self._pii_guard = Guard().use(PresidioPII(on_fail="exception"))
+
 
     def validate(
         self,

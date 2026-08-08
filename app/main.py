@@ -1,6 +1,4 @@
-"""Home (index) page. `streamlit run app/main.py`.
-Search an NSE ticker -> generate report (live progress) -> render -> PDF.
-The Chatbot lives in app/pages/1_Chatbot.py."""
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -29,19 +27,17 @@ AGENT_TABS = {"fundamentals": "Company & Fundamentals",
               "docs": "Financial Documents"}
 PROGRESS_ROWS = ["fundamentals", "competitor", "news", "events", "docs", "synthesis"]
 PROGRESS_LABELS = {**AGENT_TABS, "synthesis": "Synthesis"}
-_ICONS = {"passed": "✅", "no_data": "📭", "failed_partial": "⚠️",
-          "running": "🔄", "pending": "⏳"}
 
 st.set_page_config(page_title="Stock Research Platform",
                    page_icon="📈", layout="wide")
 st.markdown(css_block(), unsafe_allow_html=True)
-st.session_state.setdefault("sessions", {})
 
 st.title("📈 Research an NSE Company")
 st.caption("NSE-only equity research. Read-only. Not investment advice.")
 st.divider()
 
 
+# searchbox lookup: top NSE ticker matches as label/value pairs
 def _search(query: str):
     if not query:
         return []
@@ -64,6 +60,7 @@ ticker, company_name = picked
 existing = load_report(ticker)
 
 
+# four-column quote strip: price, cap, p/e, 52-week range
 def _metric_tiles(symbol: str) -> None:
     """Live yfinance quote row. Silent no-op if the fetch fails."""
     q = get_quote(symbol)
@@ -80,6 +77,7 @@ def _metric_tiles(symbol: str) -> None:
     c4.metric("52-week range", rng)
 
 
+# draw a saved report: summary, agent tabs, pdf and chat actions
 def _render_report(stored: dict) -> None:
     report = stored["report"]
     specialists = stored.get("specialists", {})
@@ -124,6 +122,7 @@ def _render_report(stored: dict) -> None:
                      use_container_width=True)
 
 
+# run the graph with live per-agent progress, then save the result
 def _generate() -> None:
     with st.status("Generating report…", expanded=True) as status:
         rows = {name: st.empty() for name in PROGRESS_ROWS}
@@ -137,7 +136,7 @@ def _generate() -> None:
                 if name == "synthesis" and update["report"] is not None:
                     state = "passed"
                 rows[name].markdown(
-                    f"{_ICONS.get(state, '⏳')} {PROGRESS_LABELS[name]}")
+                    f"{status_icon(state)} {PROGRESS_LABELS[name]}")
             if update["done"]:
                 final = update
         if final and final["report"] is not None:

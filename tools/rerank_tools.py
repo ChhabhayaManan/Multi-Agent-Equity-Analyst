@@ -5,7 +5,7 @@ from utils.helpers import get_logger, load_config
 logger = get_logger(__name__)
 _client: Optional[cohere.ClientV2] = None
 
-
+#get cohere client singleton, lazy load
 def _get_client() -> cohere.ClientV2:
     global _client
     if _client is None:
@@ -14,10 +14,10 @@ def _get_client() -> cohere.ClientV2:
 
 
 def cohere_rerank(query: str, docs: List[str], top_n: int = 5) -> List[dict]:
-    """Rerank docs against query with Cohere rerank-v3.5.
+    """
+    Rerank docs against query with Cohere rerank-v3.5.
 
-    Returns [{document, relevance_score, index}] sorted by relevance_score desc,
-    where index refers to the position in the original docs list.
+    it'll give document, relevance_score, and index of the document in the original docs list.
     """
     if not docs:
         return []

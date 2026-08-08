@@ -1,10 +1,4 @@
-"""Persist final reports as one JSON file per ticker under data/reports/.
-
-Schema v2 stores the five specialist outputs and the per-agent run
-bookkeeping alongside the report, so the UI can render the structured data
-the agents actually fetched. Files written before v2 hold only the old
-markdown report and are reported as legacy: the page asks the user to
-regenerate rather than rendering a half-empty view."""
+"""Persist final reports as one JSON file per ticker ."""
 import json
 import os
 from pathlib import Path
@@ -29,16 +23,19 @@ SPECIALIST_CLASSES = {
 }
 
 
+# reports folder, created on first use; REPORTS_DIR overrides the default
 def _reports_dir() -> Path:
     d = Path(os.environ.get("REPORTS_DIR", "data/reports"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
+# one JSON file per ticker, named by its sanitized namespace
 def _path(ticker: str) -> Path:
     return _reports_dir() / f"{namespace_of(ticker)}.json"
 
 
+# dump report + specialists + run bookkeeping to disk as schema v2
 def save_report(ticker: str, company_name: str, report: ReportOutput,
                 generated_at: str, specialists: Optional[dict] = None,
                 runs: Optional[dict] = None) -> Path:
@@ -56,6 +53,7 @@ def save_report(ticker: str, company_name: str, report: ReportOutput,
     return path
 
 
+# read one report back into pydantic objects; older files flagged legacy
 def load_report(ticker: str) -> Optional[dict]:
     path = _path(ticker)
     if not path.exists():
@@ -75,6 +73,7 @@ def load_report(ticker: str) -> Optional[dict]:
     return data
 
 
+# every saved report as a summary row, newest first; bad files skipped
 def list_reports() -> list:
     out = []
     for f in _reports_dir().glob("*.json"):

@@ -72,8 +72,9 @@ def test_advice_word_boundary():
 def test_news_rules():
     from workflow.validator import validate
     assert validate("news", _news(), _run()).passed
-    off_topic = _news(narrative="Something completely unrelated happened elsewhere entirely.")
-    assert not validate("news", off_topic, _run()).passed
+    missing_url = _news()
+    missing_url.items[0].source_url = "  "
+    assert not validate("news", missing_url, _run()).passed
 
 
 def test_events_chronology():

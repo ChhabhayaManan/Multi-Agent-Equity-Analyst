@@ -1,7 +1,7 @@
 from app.ui_helpers import (DASH, badge_html, chart_iframe_html, event_rows,
                             fmt_market_cap, fmt_num, group_sources,
                             guidance_rows, kv_rows, move_chip_html, news_rows,
-                            peer_rows, section_note, status_icon)
+                            peer_rows, status_icon)
 from templates.schemas.outputs import (CompetitorOutput, DocsOutput,
                                        EventOutput, FundamentalsOutput,
                                        GuidanceItem, NewsItem, NewsOutput,
@@ -54,9 +54,9 @@ DOCS = DocsOutput(
 
 
 def test_badge_html_colors_known_values():
-    assert "AHEAD" in badge_html("AHEAD", "standing")
-    assert "background" in badge_html("POSITIVE", "sentiment").lower()
-    assert "MYSTERY" in badge_html("MYSTERY", "nope")
+    assert "AHEAD" in badge_html("AHEAD")
+    assert "background" in badge_html("POSITIVE").lower()
+    assert "MYSTERY" in badge_html("MYSTERY")
 
 
 def test_chart_iframe_reads_file(tmp_path):
@@ -67,11 +67,6 @@ def test_chart_iframe_reads_file(tmp_path):
 
 def test_chart_iframe_missing_returns_none():
     assert chart_iframe_html("does/not/exist.html") is None
-
-
-def test_section_note():
-    assert section_note(["news"], "news") is not None
-    assert section_note(["news"], "docs") is None
 
 
 def test_fmt_num_and_market_cap_handle_none():

@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
-
 from templates.prompts.common import COMMON_HEADER
 
+#synthesis agent prompt
 SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
     ("system", COMMON_HEADER + """
 You are a senior equity research editor.

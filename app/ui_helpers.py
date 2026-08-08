@@ -1,6 +1,4 @@
-"""Pure (Streamlit-free) presentation helpers so they can be unit-tested.
-Row builders shape specialist outputs into table rows shared by the
-Streamlit page and the PDF builder, so the two formats cannot drift."""
+
 from pathlib import Path
 from typing import Optional
 
@@ -19,13 +17,25 @@ _NEUTRAL = "#555"
 _STATUS_ICONS = {"passed": "✅", "no_data": "📭", "failed_partial": "⚠️",
                  "running": "🔄", "pending": "⏳"}
 
+VALUATION_LABELS = [("pe", "P/E", ""), ("pb", "P/B", ""), ("roe", "ROE", "%"),
+                    ("roce", "ROCE", "%"), ("debt_equity", "Debt / Equity", ""),
+                    ("dividend_yield", "Dividend yield", "%")]
+PRICE_LABELS = [("price", "Price", "₹"), ("high_52w", "52-week high", "₹"),
+                ("low_52w", "52-week low", "₹"), ("ret_1m", "1-month return", "%"),
+                ("ret_6m", "6-month return", "%"), ("ret_1y", "1-year return", "%"),
+                ("mktcap_cr", "Market cap", "cr")]
+HOLDING_LABELS = [("promoter", "Promoter", "%"), ("fii", "FII", "%"),
+                  ("dii", "DII", "%"), ("public", "Public", "%")]
 
-def badge_html(label: str, kind: str) -> str:
+
+# colored pill for a rating label; grey when the label is unknown
+def badge_html(label: str) -> str:
     color = _COLORS.get(label, _NEUTRAL)
     return (f"<span style='background:{color};color:#fff;border-radius:10px;"
             f"padding:2px 10px;font-size:12px;font-weight:600'>{label}</span>")
 
 
+# saved chart file -> its raw HTML, or None when the file is missing
 def chart_iframe_html(path: str) -> Optional[str]:
     p = Path(path)
     if not p.exists():
@@ -33,17 +43,13 @@ def chart_iframe_html(path: str) -> Optional[str]:
     return p.read_text(encoding="utf-8")
 
 
-def section_note(missing: list, key: str) -> Optional[str]:
-    if key in missing:
-        return "_Data unavailable for this section._"
-    return None
-
-
+# picks the tab emoji for an agent's run status
 def status_icon(status: Optional[str]) -> str:
     """Agent run status -> tab icon. Unknown or None reads as pending."""
     return _STATUS_ICONS.get(status or "", "⏳")
 
 
+# rupees -> short crore or lakh-crore text, dash when empty
 def fmt_market_cap(value: Optional[float]) -> str:
     """INR absolute -> Indian crore/lakh-crore string."""
     if not value:
@@ -54,6 +60,7 @@ def fmt_market_cap(value: Optional[float]) -> str:
     return f"₹{cr:,.0f} Cr"
 
 
+# one number with separators and affixes; dash when None
 def fmt_num(value: Optional[float], prefix: str = "", suffix: str = "",
             dp: int = 2) -> str:
     if value is None:
@@ -61,8 +68,9 @@ def fmt_num(value: Optional[float], prefix: str = "", suffix: str = "",
     return f"{prefix}{value:,.{dp}f}{suffix}"
 
 
+# signed percent chip, green up red down, blank if unknown
 def move_chip_html(label: str, pct: Optional[float]) -> str:
-    """Green/red % pill for an event price move; '' when the move is unknown."""
+   
     if pct is None:
         return ""
     color = "#3fb950" if pct >= 0 else "#f0616d"
@@ -71,9 +79,9 @@ def move_chip_html(label: str, pct: Optional[float]) -> str:
             f"border:1px solid {color}55'>{label} {sign}{pct:.2f}%</span>")
 
 
+# metric dict + label spec -> formatted Metric/Value rows
 def kv_rows(mapping: dict, labels: list) -> list:
-    """[(key, display_label, unit)] + a metric dict -> Metric/Value rows.
-    Units: '' plain, '%' percent, '₹' rupee, 'cr' Indian crore string."""
+    
     rows = []
     for key, label, unit in labels:
         value = (mapping or {}).get(key)
@@ -89,10 +97,10 @@ def kv_rows(mapping: dict, labels: list) -> list:
     return rows
 
 
+# sortable peer comparison rows, target company listed first
 def peer_rows(competitor, fundamentals, ticker: str,
               company_name: str) -> list:
-    """Peer table rows with the target pinned first. Values stay numeric so
-    st.dataframe can sort them; missing numbers stay None (blank cell)."""
+    
     rows = []
     if fundamentals is not None:
         val = fundamentals.valuation or {}
@@ -116,12 +124,14 @@ def peer_rows(competitor, fundamentals, ticker: str,
     return rows
 
 
+# headline rows with date, sentiment and link
 def news_rows(news) -> list:
     return [{"Date": it.date, "Title": it.title, "Sentiment": it.sentiment,
              "Score": it.sentiment_score, "Link": it.source_url}
             for it in (news.items if news else [])]
 
 
+# timeline rows with significance and 1d/5d price moves
 def event_rows(events) -> list:
     return [{"Date": e.date, "Type": e.type, "Significance": e.significance,
              "1D %": e.price_move_1d, "5D %": e.price_move_5d,
@@ -129,15 +139,15 @@ def event_rows(events) -> list:
             for e in (events.events if events else [])]
 
 
+# management guidance rows: metric, value, period, source
 def guidance_rows(docs) -> list:
     return [{"Metric": g.metric, "Value": g.value, "Period": g.period,
              "Source": g.source}
             for g in (docs.guidance if docs else [])]
 
 
+# citations grouped by kind, deduped, empty groups dropped
 def group_sources(specialists: dict) -> list:
-    """[(group_title, [ref])] built from the stored specialist objects.
-    Deduped per group, empty groups omitted."""
     news = specialists.get("news")
     docs = specialists.get("docs")
     events = specialists.get("events")
@@ -162,6 +172,7 @@ def group_sources(specialists: dict) -> list:
     return out
 
 
+# the page's shared stylesheet, injected once as one string
 def css_block() -> str:
     """Shared 'fintech-pro' polish. Injected once per page via st.markdown.
     Light-touch: styles native widgets (metrics/tabs/containers), no layout

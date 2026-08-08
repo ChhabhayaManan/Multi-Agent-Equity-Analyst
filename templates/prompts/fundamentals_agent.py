@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
-
 from templates.prompts.common import COMMON_HEADER, RELEVANCE_RULES
 
+#fundamentals agent prompt
 FUNDAMENTALS_PROMPT = ChatPromptTemplate.from_messages([
     ("system", COMMON_HEADER + RELEVANCE_RULES + """
 You are a fundamentals analyst for Indian equities.

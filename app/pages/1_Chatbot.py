@@ -1,4 +1,4 @@
-"""Chatbot: pick a researched ticker -> chat (status + inline charts) + doc list."""
+"""Chatbot: pick a researched ticker -> chat (status + inline charts)."""
 import sys
 from pathlib import Path
 
@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 from app.report_store import list_reports
 from app.ui_helpers import chart_iframe_html, css_block
 from chatbot.chatbot_agent import ChatSession
-from tools.pinecone_tools import list_documents, namespace_exists
+from tools.pinecone_tools import namespace_exists
 from utils.tracing import init_tracing
 
 init_tracing()
@@ -50,22 +50,7 @@ if ticker not in sessions:
 session = sessions[ticker]
 history = st.session_state.setdefault(f"history_{ticker}", [])
 
-chat_col, doc_col = st.columns([2.5, 1])
-
-with doc_col:
-    st.subheader("Indexed documents")
-    docs = list_documents(ticker)
-    if not docs:
-        st.caption("No documents found.")
-    for source_type in sorted(docs.keys()):
-        items = docs[source_type]
-        with st.container(border=True):
-            st.markdown(f"**{source_type}** "
-                        f"<span class='pill'>{len(items)}</span>",
-                        unsafe_allow_html=True)
-            for d in items:
-                date = f" · {d['date']}" if d.get("date") else ""
-                st.caption(f"{d['document_id']}{date}")
+chat_col = st.container()
 
 with chat_col:
     for turn in history:
@@ -77,7 +62,6 @@ with chat_col:
                     components.html(html, height=420, scrolling=True)
 
 # chat_input at top level (not inside a column) so it pins to the page bottom;
-# new turns render into chat_col above it, keeping order user -> assistant.
 prompt = st.chat_input(f"Ask about {company_name}…")
 if prompt:
     with chat_col:

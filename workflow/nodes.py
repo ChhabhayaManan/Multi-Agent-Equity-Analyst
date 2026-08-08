@@ -1,6 +1,4 @@
-"""LangGraph node functions. AGENT_RUNNERS maps agent name -> run callable
-(uniform contract: run(ticker, company_name, retry_feedback) ->
-(output, fetch_count)); tests monkeypatch entries here."""
+"""LangGraph nodes used in the workflow graph."""
 
 from agents.competitor_intelligence_agent import run as run_competitor
 from agents.event_timeline_creator import run as run_events
@@ -15,7 +13,7 @@ from workflow.validator import scan_advice, validate
 
 logger = get_logger(__name__)
 
-AGENT_RUNNERS = {
+AGENT_RUNNERS = { #agent runners defined for each agent
     "fundamentals": run_fundamentals,
     "competitor": run_competitor,
     "news": run_news,
@@ -27,8 +25,7 @@ MAX_ATTEMPTS = 2
 
 
 def prepare(state: GraphState) -> dict:
-    """Freshness: stock data staleness policy is 'always regenerate' - wipe
-    the ticker namespace so every agent re-fetches and re-indexes."""
+    """Prepares the initial state for new report generation."""
     reset_embed_floor()
     ticker = state["ticker"]
     if namespace_exists(ticker):
@@ -40,6 +37,7 @@ def prepare(state: GraphState) -> dict:
         **{name: None for name in AGENTS},
     }
 
+# node factory for the run nodes: returns a fn. for perticular agent.
 def make_run_node(name: str):
     def node(state: GraphState) -> dict:
         run = state["runs"][name]
@@ -63,7 +61,7 @@ def make_run_node(name: str):
 
     return node
 
-
+# validation node factory: returns a validation node fn. for perticular agent.
 def make_validate_node(name: str):
     def node(state: GraphState) -> dict:
         run = state["runs"][name]
@@ -85,11 +83,11 @@ def make_validate_node(name: str):
 
     return node
 
-
+# wrapper for the synthesis node: returns a synthesis node fn.
 def synthesis(state: GraphState) -> dict:
     report = None
     feedback = ""
-    for attempt in range(2):
+    for attempt in range(MAX_ATTEMPTS):
         try:
             candidate = run_synthesis(state, feedback)
         except Exception as e:
@@ -98,7 +96,7 @@ def synthesis(state: GraphState) -> dict:
                 continue
             logger.exception("synthesis raised on attempt 2; giving up")
             break
-        problems = scan_advice(candidate)
+        problems = scan_advice(candidate) # checks for any issue in the synthesis output
         if not candidate.exec_summary.strip():
             problems.append("exec_summary is empty")
         if not problems:
