@@ -6,7 +6,15 @@ from typing import Optional
 from groq import Groq
 from guardrails import Guard
 from guardrails.validator_base import FailResult, PassResult, Validator, register_validator
-from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+from presidio_analyzer.predefined_recognizers import (
+    InAadhaarRecognizer,
+    InPanRecognizer,
+    InPassportRecognizer,
+    InVehicleRegistrationRecognizer,
+    InVoterRecognizer,
+)
 
 from guard.messages import (
     ADVICE_REQUEST_MESSAGE,
@@ -28,6 +36,10 @@ warnings.filterwarnings(
 )
 
 JUDGE_MODEL = "llama-3.1-8b-instant"
+
+SPACY_MODEL = "en_core_web_sm"
+
+PII_SCORE_THRESHOLD = 0.4
 
 
 PII_ENTITIES = [
@@ -52,7 +64,23 @@ _groq_client: Optional[Groq] = None
 def _get_analyzer() -> AnalyzerEngine:
     global _analyzer
     if _analyzer is None:
-        _analyzer = AnalyzerEngine()
+        nlp_engine = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": SPACY_MODEL}],
+            }
+        ).create_engine()
+        registry = RecognizerRegistry()
+        registry.load_predefined_recognizers(nlp_engine=nlp_engine)
+        for recognizer in (
+            InPanRecognizer(),
+            InAadhaarRecognizer(),
+            InPassportRecognizer(),
+            InVehicleRegistrationRecognizer(),
+            InVoterRecognizer(),
+        ):
+            registry.add_recognizer(recognizer)
+        _analyzer = AnalyzerEngine(nlp_engine=nlp_engine, registry=registry)
     return _analyzer
 
 
@@ -68,7 +96,12 @@ class PresidioPII(Validator):
     """Custom GuardrailsAI validator wrapping Presidio directly (no Hub account needed)."""
 
     def validate(self, value, metadata):
-        if _get_analyzer().analyze(text=value, language="en", entities=PII_ENTITIES):
+        if _get_analyzer().analyze(
+            text=value,
+            language="en",
+            entities=PII_ENTITIES,
+            score_threshold=PII_SCORE_THRESHOLD,
+        ):
             return FailResult(error_message="PII detected in message")
         return PassResult()
 
