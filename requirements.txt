@@ -6,11 +6,13 @@ cohere
 beautifulsoup4
 lxml
 pdfplumber
+PyMuPDF
 requests
 pytest
 guardrails-ai
 presidio-analyzer
 presidio-anonymizer
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 groq
 langgraph
 langchain
