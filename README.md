@@ -67,7 +67,7 @@ Retail equity research is scattered across filings, concalls, news, and peer dat
 A ticker fans out to **five specialists running in parallel**. Each is a two-step node — `run` then `validate` — and a conditional router either **retries** (injecting the validator's feedback, 2 attempts max) or **joins**. A branch that still fails after its retry joins as `failed_partial` rather than blocking the run. Synthesis is deferred until all five branches settle, then merges them into one structured report.
 
 - **Shared Pinecone index** `stock-research` (serverless), **one namespace per ticker** (e.g. `HDFCBANK`), vectors tagged with `source_type` (`news \| docs \| events \| competitor \| report`). Each agent filters by its own `source_type`.
-- **Embeddings:** NVIDIA NIM hosted `nvidia/nv-embed-v1` (4096-dim, requires `NVIDIA_API_KEY`).
+- **Embeddings:** NVIDIA NIM hosted `nvidia/nemotron-3-embed-1b` (2048-dim, requires `NVIDIA_API_KEY`).
 - **Report ≠ guarded:** the synthesized report is **not** run through guardrails — agents rely on their system prompts for no-advice tone. Guardrails gate the **chatbot only** (below). This is a deliberate, honest scope choice.
 
 | Agent | Pattern | Output section |
@@ -87,7 +87,7 @@ A ticker fans out to **five specialists running in parallel**. Each is a two-ste
 
 Every turn is gated on **both** ends:
 
-1. **Input guardrail** — Presidio PII detection (email, phone, PAN, Aadhaar, …) + a Groq `llama-3.1-8b-instant` judge classifying offensive / jailbreak / advice-request. Fails **closed**.
+1. **Input guardrail** — Presidio PII detection (email, phone, PAN, Aadhaar, …) + a Groq `openai/gpt-oss-20b` judge classifying offensive / jailbreak / advice-request. Fails **closed**.
 2. **ReAct agent** — up to 8 tool rounds over `search_research` (Pinecone k=10 → **Cohere rerank top-5**), live price, fundamentals, price history, charts, news, and Alpha Vantage MCP tools.
 3. **Output guardrail** — advice language stripped by context-aware regex, then **per-sentence groundedness**: a sentence survives if it is the mandated refusal, reuses a number found in *this turn's* tool outputs, or clears **cosine ≥ 0.6** against them (only sentences failing the first two checks are embedded) — otherwise it's dropped.
 
@@ -119,10 +119,10 @@ Every report run and chatbot turn is traced in **LangSmith**, tagged by ticker a
 | Layer | Technology |
 |---|---|
 | **Orchestration** | LangGraph (parallel fan-out + per-agent validate→retry) |
-| **LLM (agents)** | Per-call ladder with backoff: Groq `llama-3.3-70b-versatile` → Groq `openai/gpt-oss-120b` → Gemini |
-| **LLM (guard judge)** | Groq `llama-3.1-8b-instant` |
+| **LLM (agents)** | Per-call ladder with backoff: Groq `openai/gpt-oss-120b` → Groq `openai/gpt-oss-20b` → Gemini |
+| **LLM (guard judge)** | Groq `openai/gpt-oss-20b` |
 | **Vector store** | Pinecone serverless — namespace per ticker, `source_type` tags |
-| **Embeddings** | NVIDIA NIM `nvidia/nv-embed-v1` (requires `NVIDIA_API_KEY`) |
+| **Embeddings** | NVIDIA NIM `nvidia/nemotron-3-embed-1b` (requires `NVIDIA_API_KEY`) |
 | **Reranking** | Cohere Rerank |
 | **Guardrails** | GuardrailsAI + Presidio (PII) + custom groundedness validator |
 | **Tools / MCP** | yfinance, newsdata.io, Alpha Vantage (remote MCP), pdfplumber, plotly |
@@ -187,7 +187,7 @@ tests/        pytest suite across every layer
 - **Why guardrails on the chatbot only?** The report is generated once from controlled agent prompts; the chatbot is open-ended user input, where PII, jailbreaks, and advice-seeking actually arrive. Guarding the live surface is where it counts.
 - **Why namespace-per-ticker?** Clean isolation and cheap teardown — each stock's `news/docs/events/competitor/report` chunks live together and are filtered by `source_type`, so agents never bleed context across tickers.
 - **Why validate→retry instead of a critic agent?** A deterministic validator with feedback injection is cheaper and more predictable than an extra LLM reflection pass, and it keeps each branch self-contained for the parallel fan-out.
-- **Why a three-tier LLM ladder?** Free-tier rate limits. A 429 on Groq 70b steps down to `gpt-oss-120b`; a 413 (prompt too large for either Groq bucket) skips straight to Gemini, which has the context window. The ladder is rebuilt per `invoke()` with no module-level provider state — five parallel branches can't race each other into a downgrade.
+- **Why a three-tier LLM ladder?** Free-tier rate limits. A 429 on `gpt-oss-120b` steps down to `gpt-oss-20b`; a 413 (prompt too large for either Groq bucket) skips straight to Gemini, which has the context window. The ladder is rebuilt per `invoke()` with no module-level provider state — five parallel branches can't race each other into a downgrade.
 
 </details>
 

@@ -35,7 +35,7 @@ warnings.filterwarnings(
     "ignore", message="Could not obtain an event loop", category=UserWarning
 )
 
-JUDGE_MODEL = "llama-3.1-8b-instant"
+JUDGE_MODEL = "openai/gpt-oss-20b"
 
 SPACY_MODEL = "en_core_web_sm"
 

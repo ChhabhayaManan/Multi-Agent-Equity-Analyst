@@ -86,7 +86,7 @@ def test_groq_models_are_ids_this_key_can_reach():
     """llama-4-scout 404s on the free tier - a dead tier-2 id used to raise
     that 404 as a hard error and Gemini was never reached."""
     assert "meta-llama/llama-4-scout-17b-16e-instruct" not in GROQ_MODELS
-    assert GROQ_MODELS[0] == "llama-3.3-70b-versatile"
+    assert GROQ_MODELS[0] == "openai/gpt-oss-120b"
     # 8b-instant has the smallest bucket (6k TPM) and is already spent on the
     # guardrail judge and chat memory; it must not be an agent tier.
     assert "llama-3.1-8b-instant" not in GROQ_MODELS

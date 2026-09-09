@@ -9,7 +9,7 @@ from utils.helpers import get_logger, load_config
 
 logger = get_logger(__name__)
 
-SUMMARY_MODEL = "llama-3.1-8b-instant"
+SUMMARY_MODEL = "openai/gpt-oss-20b"
 SUMMARY_PROMPT = (
     "Summarize this chatbot exchange in 2-3 short lines. Keep tickers, "
     "numbers and dates exact. No preamble.\n\n"

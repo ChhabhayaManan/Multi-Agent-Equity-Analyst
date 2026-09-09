@@ -1,6 +1,6 @@
-"""LLM factory. Ladder per invoke(): Groq 70b (12k TPM) -> Groq gpt-oss-120b
-(8k TPM) -> Gemini. No module-level provider state: parallel branches must not
-downgrade each other."""
+"""LLM factory. Ladder per invoke(): Groq gpt-oss-120b (8k TPM) -> Groq
+gpt-oss-20b -> Gemini. No module-level provider state: parallel branches must
+not downgrade each other."""
 
 import os
 from functools import lru_cache
@@ -12,8 +12,8 @@ from utils.helpers import get_logger, load_config
 
 logger = get_logger(__name__)
 
-GROQ_MODELS = ("llama-3.3-70b-versatile", "openai/gpt-oss-120b")
-GEMINI_MODEL = "gemini-3.5-flash"
+GROQ_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b")
+GEMINI_MODEL = "gemini-3.8-flash"
 GROQ_TIMEOUT_S = 15
 
 
@@ -21,6 +21,7 @@ GROQ_TIMEOUT_S = 15
 def _groq(model: str = GROQ_MODELS[0]):
     from langchain_groq import ChatGroq
     return ChatGroq(model=model, temperature=0, timeout=GROQ_TIMEOUT_S,
+                    reasoning_effort="low",
                     api_key=load_config()["GROQ_API_KEY"])
 
 

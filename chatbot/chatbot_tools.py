@@ -57,7 +57,7 @@ def build_local_tools(ticker: str) -> list:
             docs = [h["text"] for h in hits if h["text"]]
             if not docs:
                 return {"results": [], "note": "no indexed chunks matched"}
-            ranked = cohere_rerank(query, docs, top_n=5)
+            ranked = cohere_rerank(query, docs, top_n=3)
             by_text = {h["text"]: h["metadata"] for h in hits}
             return {"results": [
                 {"text": r["document"],

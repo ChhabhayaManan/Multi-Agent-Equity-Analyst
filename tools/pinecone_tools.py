@@ -12,8 +12,8 @@ logger = get_logger(__name__)
 
 # Embeding Configuration
 INDEX_NAME = "stock-research"
-EMBED_DIM = 4096  # NV-Embed-v1 outputs 4096-dim vectors
-NVIDIA_MODEL = "nvidia/nv-embed-v1"
+EMBED_DIM = 2048  # Nemotron-3-Embed-1B outputs 2048-dim vectors
+NVIDIA_MODEL = "nvidia/nemotron-3-embed-1b"
 
 
 CHUNK_SIZE = 4000
