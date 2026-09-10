@@ -1,6 +1,6 @@
-"""LLM factory. Ladder per invoke(): Groq gpt-oss-120b (8k TPM) -> Groq
-gpt-oss-20b -> Gemini. No module-level provider state: parallel branches must
-not downgrade each other."""
+"""LLM factory. Ladder per invoke(): Groq gpt-oss-20b -> Gemini. No
+module-level provider state: parallel branches must not downgrade each
+other."""
 
 import os
 from functools import lru_cache
@@ -12,7 +12,7 @@ from utils.helpers import get_logger, load_config
 
 logger = get_logger(__name__)
 
-GROQ_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b")
+GROQ_MODELS = ("openai/gpt-oss-20b",)
 GEMINI_MODEL = "gemini-3.8-flash"
 GROQ_TIMEOUT_S = 15
 
@@ -82,9 +82,7 @@ class _BackoffLLM:
         return _groq(model_name) if provider == "groq" else _gemini()
 
     def invoke(self, input, **kwargs):
-        tiers = [("groq", GROQ_MODELS[0]),
-                 ("groq", GROQ_MODELS[1]),
-                 ("gemini", GEMINI_MODEL)]
+        tiers = [("groq", m) for m in GROQ_MODELS] + [("gemini", GEMINI_MODEL)]
         gemini_index = len(tiers) - 1
 
         index, tries, last_exception = 0, 0, None

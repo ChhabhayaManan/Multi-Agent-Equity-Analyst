@@ -1,8 +1,7 @@
 """Ladder behaviour for _BackoffLLM.
 
-The ladder is Groq 70b -> Groq gpt-oss-120b -> Gemini. Every test here pins a
-failure mode that previously ended the ladder early and lost the Gemini
-fallback.
+The ladder is Groq gpt-oss-20b -> Gemini. Every test here pins a failure mode
+that previously ended the ladder early and lost the Gemini fallback.
 """
 
 import threading
@@ -71,93 +70,86 @@ class FakeModel:
 
 @pytest.fixture
 def ladder(monkeypatch):
-    """Returns (tier1, tier2, gemini) fakes wired into utils.llm."""
-    tier1 = FakeModel("groq-70b")
-    tier2 = FakeModel("groq-120b")
+    """Returns (groq, gemini) fakes wired into utils.llm."""
+    groq = FakeModel("groq-20b")
     gemini = FakeModel("gemini")
-    registry = {GROQ_MODELS[0]: tier1, GROQ_MODELS[1]: tier2}
-    monkeypatch.setattr("utils.llm._groq",
-                        lambda model=GROQ_MODELS[0]: registry[model])
+    monkeypatch.setattr("utils.llm._groq", lambda model=GROQ_MODELS[0]: groq)
     monkeypatch.setattr("utils.llm._gemini", lambda: gemini)
-    return tier1, tier2, gemini
+    return groq, gemini
 
 
 def test_groq_models_are_ids_this_key_can_reach():
-    """llama-4-scout 404s on the free tier - a dead tier-2 id used to raise
-    that 404 as a hard error and Gemini was never reached."""
-    assert "meta-llama/llama-4-scout-17b-16e-instruct" not in GROQ_MODELS
-    assert GROQ_MODELS[0] == "openai/gpt-oss-120b"
-    # 8b-instant has the smallest bucket (6k TPM) and is already spent on the
-    # guardrail judge and chat memory; it must not be an agent tier.
-    assert "llama-3.1-8b-instant" not in GROQ_MODELS
+    """Every id here must be live on the free tier - a dead id used to raise
+    its 404 as a hard error and Gemini was never reached."""
+    assert GROQ_MODELS == ("openai/gpt-oss-20b",)
+    # 120b answered structured requests in prose instead of calling the
+    # forced tool and 400d every time; it must not come back as a tier.
+    assert "openai/gpt-oss-120b" not in GROQ_MODELS
 
 
-def test_happy_path_uses_first_groq_tier(ladder):
+def test_happy_path_uses_the_groq_tier(ladder):
     from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
-    assert get_llm().invoke("hi") == "groq-70b-answer"
-    assert (tier2.calls, gemini.calls) == (0, 0)
-
-
-def test_rate_limit_steps_to_second_groq_tier(ladder):
-    from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
-    tier1.error, tier1.error_times = rate_limit_error(), 1
-    assert get_llm().invoke("hi") == "groq-120b-answer"
+    groq, gemini = ladder
+    assert get_llm().invoke("hi") == "groq-20b-answer"
     assert gemini.calls == 0
 
 
-def test_dead_tier_does_not_end_the_ladder(ladder):
-    """Regression: a 404 on tier 2 is not a rate limit and not a tool-use
-    failure, so the old code broke out and raised it. Gemini never ran."""
+def test_rate_limit_steps_to_gemini(ladder):
     from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
-    tier1.error, tier1.error_times = rate_limit_error(), 1
-    tier2.error, tier2.error_times = model_not_found_error(GROQ_MODELS[1]), 1
+    groq, gemini = ladder
+    groq.error, groq.error_times = rate_limit_error(), 1
+    assert get_llm().invoke("hi") == "gemini-answer"
+
+
+def test_dead_tier_does_not_end_the_ladder(ladder):
+    """Regression: a 404 is not a rate limit and not a tool-use failure, so
+    the old code broke out and raised it. Gemini never ran."""
+    from utils.llm import get_llm
+    groq, gemini = ladder
+    groq.error, groq.error_times = model_not_found_error(GROQ_MODELS[0]), 1
     assert get_llm().invoke("hi") == "gemini-answer"
 
 
 def test_oversized_request_skips_groq_and_goes_straight_to_gemini(ladder):
-    """Regression: a 413 means the prompt cannot fit ANY Groq bucket (12k on
-    70b, 8k on gpt-oss-120b), so stepping down a tier is guaranteed to fail
-    again. Only Gemini has the context window."""
+    """Regression: a 413 means the prompt cannot fit the 8k Groq bucket, and
+    only Gemini has the context window."""
     from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
-    tier1.error, tier1.error_times = too_large_error(), 1
+    groq, gemini = ladder
+    groq.error, groq.error_times = too_large_error(), 1
     assert get_llm().invoke("hi") == "gemini-answer"
-    assert tier2.calls == 0
+    assert groq.calls == 1
 
 
 def test_tool_use_failed_retries_once_then_changes_model(ladder):
     """temperature=0 means an identical retry gives an identical failure, so
     one retry is the cap before switching models."""
     from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
-    tier1.error, tier1.error_times = tool_use_failed_error(), 99
-    assert get_llm().invoke("hi") == "groq-120b-answer"
-    assert tier1.calls == 2
+    groq, gemini = ladder
+    groq.error, groq.error_times = tool_use_failed_error(), 99
+    assert get_llm().invoke("hi") == "gemini-answer"
+    assert groq.calls == 2
 
 
 def test_local_error_raises_without_burning_the_ladder(ladder):
     """A schema/validation error is not provider-side - it fails identically
     everywhere, so retrying it wastes quota."""
     from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
+    groq, gemini = ladder
 
     def boom(_input, **kwargs):
-        tier1.calls += 1
+        groq.calls += 1
         raise ValueError("schema mismatch")
 
-    tier1.invoke = boom
+    groq.invoke = boom
     with pytest.raises(ValueError):
         get_llm().invoke("hi")
-    assert (tier1.calls, tier2.calls, gemini.calls) == (1, 0, 0)
+    assert (groq.calls, gemini.calls) == (1, 0)
 
 
 def test_raises_last_error_when_every_tier_fails(ladder):
     from utils.llm import get_llm
-    tier1, tier2, gemini = ladder
-    for m in (tier1, tier2, gemini):
+    groq, gemini = ladder
+    for m in (groq, gemini):
         m.error, m.error_times = rate_limit_error(), 99
     with pytest.raises(FakeAPIError):
         get_llm().invoke("hi")
@@ -171,20 +163,16 @@ def test_threads_share_no_state(monkeypatch):
     monkeypatch.setattr("utils.llm._gemini", lambda: gemini)
     results = {}
 
-    def call(name, tier1, tier2):
-        registry = {GROQ_MODELS[0]: tier1, GROQ_MODELS[1]: tier2}
-        monkeypatch.setattr("utils.llm._groq",
-                            lambda model=GROQ_MODELS[0]: registry[model])
+    def call(name, groq):
+        monkeypatch.setattr("utils.llm._groq", lambda model=GROQ_MODELS[0]: groq)
         results[name] = get_llm().invoke("hi")
 
-    limited = FakeModel("groq-limited", rate_limit_error(), 99)
-    call("limited", limited, FakeModel("groq-120b", rate_limit_error(), 99))
-    call("healthy", FakeModel("groq-healthy"), FakeModel("groq-120b"))
+    call("limited", FakeModel("groq-limited", rate_limit_error(), 99))
+    call("healthy", FakeModel("groq-healthy"))
     assert results["limited"] == "gemini-answer"
     assert results["healthy"] == "groq-healthy-answer"
 
-    t = threading.Thread(target=call,
-                         args=("threaded", FakeModel("groq-t"), FakeModel("t2")))
+    t = threading.Thread(target=call, args=("threaded", FakeModel("groq-t")))
     t.start()
     t.join()
     assert results["threaded"] == "groq-t-answer"

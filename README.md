@@ -8,7 +8,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-orchestration-1C3C3C?logo=langchain&logoColor=white)
-![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-F55036?logo=meta&logoColor=white)
+![Groq](https://img.shields.io/badge/Groq-GPT_OSS_20B-F55036?logo=meta&logoColor=white)
 <!-- ![Gemini](https://img.shields.io/badge/Gemini-fallback-8E75B2?logo=googlegemini&logoColor=white) -->
 ![Pinecone](https://img.shields.io/badge/Pinecone-vector_store-000000?logo=pinecone&logoColor=white)
 ![Cohere](https://img.shields.io/badge/Cohere-rerank-39594D?logo=cohere&logoColor=white)
@@ -16,7 +16,7 @@
 ![LangSmith](https://img.shields.io/badge/LangSmith-tracing-1C3C3C)
 ![MCP](https://img.shields.io/badge/MCP-Alpha_Vantage-663399)
 ![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)
-![NVIDIA](https://img.shields.io/badge/NVIDIA-nv--embed--v1-F55036?logo=nvidia&logoColor=white)
+![NVIDIA](https://img.shields.io/badge/NVIDIA-nemotron--3--embed--1b-F55036?logo=nvidia&logoColor=white)
 
 </div>
 
@@ -54,7 +54,7 @@ Retail equity research is scattered across filings, concalls, news, and peer dat
 | **ReAct** | Competitor Intelligence agent + chatbot tool loop |
 | **Tool-calling** | Event Timeline agent; 10 chatbot tools (`chatbot/chatbot_tools.py`) |
 | **Rule-based guardrails** | Presidio PII + LLM judge (input); advice-strip + groundedness (output) (`guard/`) |
-| **Reranking** | Pinecone top-k → Cohere rerank top-5 (`tools/rerank_tools.py`) |
+| **Reranking** | Pinecone top-k → Cohere rerank top-3 (`tools/rerank_tools.py`) |
 | **MCP integration** | Alpha Vantage remote MCP tools via `langchain-mcp-adapters` |
 | **Observability** | LangSmith traces per agent/turn, tagged `pass \| fixed \| blocked \| error` |
 
@@ -88,7 +88,7 @@ A ticker fans out to **five specialists running in parallel**. Each is a two-ste
 Every turn is gated on **both** ends:
 
 1. **Input guardrail** — Presidio PII detection (email, phone, PAN, Aadhaar, …) + a Groq `openai/gpt-oss-20b` judge classifying offensive / jailbreak / advice-request. Fails **closed**.
-2. **ReAct agent** — up to 8 tool rounds over `search_research` (Pinecone k=10 → **Cohere rerank top-5**), live price, fundamentals, price history, charts, news, and Alpha Vantage MCP tools.
+2. **ReAct agent** — up to 8 tool rounds over `search_research` (Pinecone k=10 → **Cohere rerank top-3**), live price, fundamentals, price history, charts, news, and Alpha Vantage MCP tools.
 3. **Output guardrail** — advice language stripped by context-aware regex, then **per-sentence groundedness**: a sentence survives if it is the mandated refusal, reuses a number found in *this turn's* tool outputs, or clears **cosine ≥ 0.6** against them (only sentences failing the first two checks are embedded) — otherwise it's dropped.
 
 ---
@@ -119,7 +119,7 @@ Every report run and chatbot turn is traced in **LangSmith**, tagged by ticker a
 | Layer | Technology |
 |---|---|
 | **Orchestration** | LangGraph (parallel fan-out + per-agent validate→retry) |
-| **LLM (agents)** | Per-call ladder with backoff: Groq `openai/gpt-oss-120b` → Groq `openai/gpt-oss-20b` → Gemini |
+| **LLM (agents)** | Per-call ladder with backoff: Groq `openai/gpt-oss-20b` → Gemini |
 | **LLM (guard judge)** | Groq `openai/gpt-oss-20b` |
 | **Vector store** | Pinecone serverless — namespace per ticker, `source_type` tags |
 | **Embeddings** | NVIDIA NIM `nvidia/nemotron-3-embed-1b` (requires `NVIDIA_API_KEY`) |
@@ -187,7 +187,7 @@ tests/        pytest suite across every layer
 - **Why guardrails on the chatbot only?** The report is generated once from controlled agent prompts; the chatbot is open-ended user input, where PII, jailbreaks, and advice-seeking actually arrive. Guarding the live surface is where it counts.
 - **Why namespace-per-ticker?** Clean isolation and cheap teardown — each stock's `news/docs/events/competitor/report` chunks live together and are filtered by `source_type`, so agents never bleed context across tickers.
 - **Why validate→retry instead of a critic agent?** A deterministic validator with feedback injection is cheaper and more predictable than an extra LLM reflection pass, and it keeps each branch self-contained for the parallel fan-out.
-- **Why a three-tier LLM ladder?** Free-tier rate limits. A 429 on `gpt-oss-120b` steps down to `gpt-oss-20b`; a 413 (prompt too large for either Groq bucket) skips straight to Gemini, which has the context window. The ladder is rebuilt per `invoke()` with no module-level provider state — five parallel branches can't race each other into a downgrade.
+- **Why a two-tier LLM ladder?** Free-tier rate limits. A 429 on `gpt-oss-20b` steps down to Gemini, and so does a 413 (prompt too large for the 8k Groq bucket), since only Gemini has the context window. The ladder is rebuilt per `invoke()` with no module-level provider state — five parallel branches can't race each other into a downgrade.
 
 </details>
 
